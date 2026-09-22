@@ -1,0 +1,17 @@
+using UnityEngine;
+
+// Three side-chamber seals lead to a guarded cache. Progress is serialized with the journey.
+public class ExpeditionObjectives : MonoBehaviour
+{
+    public int[] seals=new int[8];public bool[] claimed=new bool[8];
+    readonly SpriteRenderer[,] markers=new SpriteRenderer[8,4];AshfallDirector d;
+    public static readonly string[] Titles={"Village refuge","Cleanse the old oak","Relight the miners' wards","Secure the caravan cache","Break the grave seals","Drain the drowned wards","Attune the prism seals","Reclaim the fallen crown"};
+    public static Vector2 Position(int zone,int slot){var rooms=WorldAtlas.Rooms[zone];int room=slot<3?1+slot%(rooms.Length-1):rooms.Length-1;return WorldAtlas.Centers[zone]+rooms[room]+new Vector2(slot==3?-2.5f:2.5f,0);}
+    public void Initialize(AshfallDirector director,Sprite[] art){d=director;var details=Resources.Load<Texture2D>("AshfallAtlasDetails");Sprite cache=ExpansionContent.Slice(details,8,4,4,new Vector2(.5f,.04f));for(int z=1;z<8;z++)for(int i=0;i<4;i++){var g=new GameObject(i<3?"Ancient seal":"Guarded reward cache");g.transform.position=Position(z,i);g.transform.localScale=Vector3.one*(i<3?.65f:.85f);var r=g.AddComponent<SpriteRenderer>();r.sprite=i<3?art[11]:cache;r.sortingOrder=108-(int)(g.transform.position.y*10);markers[z,i]=r;}}
+    public bool Guarded(int z,int slot){Vector2 p=Position(z,slot);foreach(var e in d.enemies)if(e&&e.hp>0&&Vector2.Distance(e.transform.position,p)<5&&CombatRules.Clear(d,e.transform.position,p))return true;return false;}
+    public int Nearby(){int z=WorldAtlas.Index(d.zone);if(z==0)return -1;for(int i=0;i<4;i++)if(Vector2.Distance(d.player.transform.position,Position(z,i))<1.6f)return i;return -1;}
+    public string Prompt(){int z=WorldAtlas.Index(d.zone),slot=Nearby();if(slot<0)return "";if(slot<3){if((seals[z]&(1<<slot))!=0)return "Seal restored";return Guarded(z,slot)?"Defeat the seal's guards":"E  Restore ancient seal";}if(claimed[z])return "Cache claimed";return seals[z]!=7?"Restore all 3 seals to unlock this cache":Guarded(z,slot)?"Defeat the cache's guards":"E  Claim expedition cache";}
+    public bool Interact(){int z=WorldAtlas.Index(d.zone),slot=Nearby();if(slot<0)return false;if(slot<3){if((seals[z]&(1<<slot))!=0)return true;if(Guarded(z,slot)){d.Tell("Clear nearby guards before restoring this seal.");return true;}seals[z]|=1<<slot;CombatFX.Ring(Position(z,slot),1.4f,Color.cyan);d.Tell("Seal restored: "+Count(z)+" / 3");}else if(!claimed[z]){if(seals[z]!=7||Guarded(z,slot)){d.Tell("Restore three seals and clear the cache guards.");return true;}claimed[z]=true;d.Add(ItemId.Gold,60+z*20);d.Add(ItemId.HealthPotion,2);d.Add(z==1?ItemId.WolfFang:z==2?ItemId.IronOre:z==3||z==5?ItemId.VenomSac:z==6?ItemId.StormCrystal:z==7?ItemId.Sunsteel:ItemId.AncientShard,4);CombatFX.Burst(Position(z,slot),Color.yellow,15);d.Tell("Expedition cache claimed: gold, potions and crafting materials.");}AshfallBeta.Instance.SaveJourney();return true;}
+    public int Count(int z){int count=0;for(int i=0;i<3;i++)if((seals[z]&(1<<i))!=0)count++;return count;}
+    void Update(){if(!d)return;for(int z=1;z<8;z++)for(int i=0;i<4;i++)if(markers[z,i])markers[z,i].color=i<3?((seals[z]&(1<<i))!=0?Color.cyan:new Color(.65f,.5f,.9f)):claimed[z]?new Color(.4f,.4f,.4f):seals[z]==7?Color.white:new Color(.65f,.65f,.65f);}
+}
