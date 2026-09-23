@@ -10,7 +10,12 @@ public static class AshfallBuild
     const string ScenePath = "Assets/Scenes/Ashfall.unity";
 
     [MenuItem("Ashfall/Build Windows")]
-    public static void BuildWindows()
+    public static void BuildWindows(){BuildTo("Builds/ExpeditionIntegration");}
+
+    [MenuItem("Ashfall/Build Manual Playtest")]
+    public static void BuildManualPlaytest(){BuildTo("Builds/ManualPlaytest");}
+
+    static void BuildTo(string directory)
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         EditorSceneManager.SaveScene(scene, ScenePath);
@@ -21,11 +26,11 @@ public static class AshfallBuild
         PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64,new[]{UnityEngine.Rendering.GraphicsDeviceType.Direct3D11});
         PlayerSettings.defaultScreenHeight=720;
         PlayerSettings.fullScreenMode=UnityEngine.FullScreenMode.Windowed;
-        Directory.CreateDirectory("Builds/ExpeditionIntegration");
+        Directory.CreateDirectory(directory);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { ScenePath },
-            locationPathName = "Builds/ExpeditionIntegration/Ashfall.exe",
+            locationPathName = directory+"/Ashfall.exe",
             target = BuildTarget.StandaloneWindows64,
             options = BuildOptions.None
         });

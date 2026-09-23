@@ -303,6 +303,7 @@ public class AshfallDirector : MonoBehaviour
             new[]{EnemyKind.DarkKnight,EnemyKind.IceWraith,EnemyKind.StoneGolem,EnemyKind.Scorpion}};
         foreach(var kind in roster[area])Spawn(kind,area==0?2:area==7?5:4,area==4||area==7);
         if(z=="Dungeon"&&bossState==0){Spawn(EnemyKind.HollowKnight,1,true);bossState=1;Tell("THE HOLLOW KNIGHT AWAKENS.");}
+        if(objectives&&area>0)objectives.DeployGuards(area);
         foreach(var bolt in FindObjectsByType<EnemyBolt>(FindObjectsSortMode.None))Destroy(bolt.gameObject);
     }
 
