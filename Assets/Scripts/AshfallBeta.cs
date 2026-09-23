@@ -30,7 +30,8 @@ public class AshfallBeta : MonoBehaviour
     bool WeaponTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-weaponTest")>=0;}}
     bool WorldTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-worldTest")>=0;}}
     bool DetailTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-detailTest")>=0;}}
-    bool Testing {get{return DetailTesting||WorldTesting||WeaponTesting||RigTesting||ItemTesting||Array.IndexOf(Environment.GetCommandLineArgs(),"-betaTest")>=0;}}
+    bool CaptureTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-betaCapture")>=0;}}
+    bool Testing {get{return CaptureTesting||DetailTesting||WorldTesting||WeaponTesting||RigTesting||ItemTesting||Array.IndexOf(Environment.GetCommandLineArgs(),"-betaTest")>=0;}}
     string SavePath { get {return Path.Combine(Application.persistentDataPath,Testing?"ashfall-qa.json":"ashfall-beta.json");} }
 
     void Start()
@@ -45,6 +46,7 @@ public class AshfallBeta : MonoBehaviour
             art[i]=Sprite.Create(atlas,new Rect((i%4)*cw,(3-i/4)*ch,cw,ch),new Vector2(.5f,.12f),cw);
         }
         world=new WorldPresentation(this,d,art);
+        d.objectives=gameObject.AddComponent<ExpeditionObjectives>();d.objectives.Initialize(d,art);
         d.cam.orthographicSize=5.8f;
         d.cam.backgroundColor=new Color(.075f,.095f,.095f);
         // Render at native resolution; point-filtered sprites retain pixel edges without camera quantization.
@@ -56,7 +58,7 @@ public class AshfallBeta : MonoBehaviour
         }vignette.Apply();
         d.cam.transform.position=new Vector3(0,1,-10);
         Paused=true;Time.timeScale=0;
-        if(Array.IndexOf(Environment.GetCommandLineArgs(),"-betaCapture")>=0){title=false;Paused=false;Time.timeScale=1;StartCoroutine(Capture());}
+        if(CaptureTesting){title=false;Paused=false;Time.timeScale=1;StartCoroutine(Capture());}
         if(DetailTesting)StartCoroutine(TestDetails());else if(WorldTesting)StartCoroutine(TestWorld());else if(WeaponTesting)StartCoroutine(TestWeapons());else if(ItemTesting)StartCoroutine(TestItems());else if(RigTesting)StartCoroutine(TestRig());else if(Testing)StartCoroutine(TestBeta());
     }
     IEnumerator TestDetails(){
@@ -73,7 +75,7 @@ public class AshfallBeta : MonoBehaviour
         yield return new WaitForSecondsRealtime(1);title=false;pause=true;d.player.enabled=false;d.kills=60;d.bossState=2;
         Check(d.bag.Count==39&&d.recipes.Count==20,"Expanded content counts");
         for(int z=0;z<8;z++){
-            Travel(z);pause=false;yield return null;pause=true;
+            TravelForTest(z);pause=false;yield return null;pause=true;
             Check(d.enemies.Count>=4,"Populated "+zones[z]);
             foreach(var e in d.enemies)Check(WorldAtlas.Walkable(z,(Vector2)e.transform.position-centers[z]),"Valid spawn "+e.kind);
             var exits=new HashSet<Vector2>();foreach(int n in WorldAtlas.Neighbors(z)){Check(WorldAtlas.Walkable(z,WorldAtlas.Gate(z,n)),"Reachable exit "+n);Check(exits.Add(WorldAtlas.Gate(z,n)),"Separate exit "+n);}
@@ -83,7 +85,7 @@ public class AshfallBeta : MonoBehaviour
         }
         foreach(var item in ExpansionContent.Weapons){d.bag[item]=1;d.player.EquipItem(item);Check(d.player.Damage>=19,"New weapon stats "+item);}
         var target=d.enemies[0];d.player.ModifiedDamage(target,20,ItemId.VenomSaber);Check(target.poisonUntil>Time.time,"Poison effect");d.player.ModifiedDamage(target,20,ItemId.ThunderAxe);Check(target.shockUntil>Time.time,"Shock effect");
-        d.player.hp=50;d.player.ModifiedDamage(target,20,ItemId.DuskStaff);Check(d.player.hp>50,"Drain effect");
+        d.player.hp=50;target.hp=target.maxHp;target.TakeDamage(d.player.ModifiedDamage(target,20,ItemId.DuskStaff),ItemId.DuskStaff);Check(d.player.hp>50,"Drain uses dealt damage");
         pause=false;map=true;yield return null;yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../world-atlas.png"));
         world.local=false;yield return null;yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../world-routes.png"));
         Debug.Log("WORLD EXPANSION QA: ALL CHECKS PASSED");yield return new WaitForSecondsRealtime(.5f);Application.Quit();
@@ -155,16 +157,23 @@ public class AshfallBeta : MonoBehaviour
         yield return new WaitForSecondsRealtime(1);title=false;pause=true;
         foreach(ItemId i in Enum.GetValues(typeof(ItemId)))d.bag[i]=100;
         int ore=d.bag[ItemId.IronOre];d.Craft(d.recipes[0]);Check(d.bag[ItemId.IronOre]==ore-8,"Crafting consumes materials");
-        d.player.ringA=ItemId.RingVampire;d.player.hp=50;d.player.Lifesteal(100);Check(Mathf.Abs(d.player.hp-53)<.01f,"Ring lifesteal");
-        d.kills=18;d.zoneTier=3;Save();d.kills=0;Load();Check(d.kills==18,"Save and load");
+        var victim=d.enemies[0];d.player.ringA=ItemId.RingVampire;d.player.hp=50;victim.hp=10;victim.TakeDamage(999,ItemId.IronSword);Check(Mathf.Abs(d.player.hp-50.3f)<.01f,"Ring lifesteal excludes overkill");
+        d.kills=18;d.zoneTier=3;d.objectives.seals[1]=3;d.objectives.claimed[2]=true;Save();d.kills=0;d.objectives.seals[1]=0;d.objectives.claimed[2]=false;Load();Check(d.kills==18&&d.objectives.seals[1]==3&&d.objectives.claimed[2],"Version 3 save and objective persistence");
         pause=false;d.craftOpen=true;yield return new WaitForSecondsRealtime(.5f);yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../beta-crafting.png"));
-        d.craftOpen=false;Travel(1);pause=true;yield return new WaitForSecondsRealtime(.5f);pause=false;map=true;
+        d.craftOpen=false;TravelForTest(1);pause=true;yield return new WaitForSecondsRealtime(.5f);
+        var persisted=d.enemies.Find(e=>e&&e.hp>0);persisted.hp=7;EnemyKind persistedKind=persisted.kind;d.RestoreLoot(persisted.transform.position+Vector3.right,ItemId.VenomSac,2);Save();TravelForTest(0);TravelForTest(1);Check(d.enemies.Exists(e=>e&&e.kind==persistedKind&&Mathf.Abs(e.hp-7)<.01f)&&d.pickups.Exists(p=>p&&p.item==ItemId.VenomSac&&p.amount==2),"Enemy health and loose loot persist between visits");
+        bool occluded=false;for(int a=0;a<WorldAtlas.Rooms[1].Length;a++)for(int b=a+1;b<WorldAtlas.Rooms[1].Length;b++)if(!CombatRules.Clear(d,centers[1]+WorldAtlas.Rooms[1][a],centers[1]+WorldAtlas.Rooms[1][b]))occluded=true;Check(occluded,"Wall trace rejects occluded room attacks");
+        var cue=d.enemies.Find(e=>e&&e.hp>0);d.player.hp=10000;d.player.transform.position=centers[1];cue.transform.position=d.player.transform.position+Vector3.right*.8f;pause=false;yield return null;yield return null;pause=true;yield return null;Check(cue.AttackStage==EnemyAttackStage.Windup,"Enemy wind-up cue");pause=false;yield return new WaitForSeconds(.25f);pause=true;yield return null;Check(cue.AttackStage==EnemyAttackStage.Strike,"Enemy strike cue");pause=false;yield return new WaitForSeconds(.13f);pause=true;yield return null;Check(cue.AttackStage==EnemyAttackStage.Recovery,"Enemy recovery cue");
+        cue.hp=0;d.player.transform.position=centers[1];d.combatUntil=0;string travelReason;Check(!CanTravel(0,out travelReason)&&travelReason.Contains("route marker"),"Remote map travel blocked");d.player.transform.position=centers[1]+WorldAtlas.Gate(1,0);d.combatUntil=Time.time+10;Check(!CanTravel(0,out travelReason)&&travelReason.Contains("engaged"),"Combat escape blocked");foreach(var e in d.enemies)if(e)e.hp=0;d.combatUntil=0;Check(CanTravel(0,out travelReason),"Safe gate travel allowed");
+        d.player.transform.position=ExpeditionObjectives.Position(1,2);Check(d.objectives.Interact()&&d.objectives.seals[1]==7,"Final expedition seal restores");int rewardGold=d.bag[ItemId.Gold];d.player.transform.position=ExpeditionObjectives.Position(1,3);Check(d.objectives.Interact()&&d.objectives.claimed[1]&&d.bag[ItemId.Gold]>rewardGold,"Guarded expedition cache rewards");
+        pause=false;map=true;
         yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../beta-map.png"));map=false;
-        Travel(4);pause=true;yield return new WaitForSecondsRealtime(.5f);
+        TravelForTest(4);pause=true;yield return new WaitForSecondsRealtime(.5f);
         var boss=d.enemies.Find(e=>e&&e.kind==EnemyKind.HollowKnight);Check(boss!=null,"Boss spawns");
         boss.TakeDamage(170);pause=false;yield return null;yield return null;pause=true;Check(d.enemies.Count>=10,"Boss phase two summons");
+        float phaseHp=boss.hp;TravelForTest(1);TravelForTest(4);boss=d.enemies.Find(e=>e&&e.kind==EnemyKind.HollowKnight);Check(boss&&boss.PhaseTwo&&Mathf.Abs(boss.hp-phaseHp)<.01f,"Boss phase and health persist between visits");
         boss.TakeDamage(1000);Check(d.bossState==2&&d.pickups.Exists(p=>p&&p.item==ItemId.HollowBlade),"Boss legendary loot");
-        Travel(1);pause=false;yield return null;yield return null;
+        TravelForTest(1);pause=false;yield return null;yield return null;
         d.player.stamina=100;d.player.weapon=WeaponKind.Sword;d.player.Special();Check(d.player.stamina<70,"Whirlwind stamina cost");
         yield return new WaitForSecondsRealtime(.06f);yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../arcade-combat.png"));
         yield return new WaitForSeconds(2.5f);d.player.stamina=100;d.player.weapon=WeaponKind.Bow;d.player.Special();Check(FindObjectsByType<HeroProjectile>(FindObjectsSortMode.None).Length>=5,"Bow fan shot");
@@ -176,7 +185,7 @@ public class AshfallBeta : MonoBehaviour
         Debug.Log("ASHFALL BETA QA: ALL CHECKS PASSED");yield return new WaitForSecondsRealtime(1);Application.Quit();
     }
     void Check(bool ok,string name){if(!ok)throw new Exception("BETA QA FAILED: "+name);Debug.Log("BETA QA PASS: "+name);}
-    IEnumerator Capture(){yield return new WaitForSecondsRealtime(3);yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../beta-preview.png"));}
+    IEnumerator Capture(){yield return new WaitForSecondsRealtime(1);d.kills=60;d.bossState=2;TravelForTest(1);yield return new WaitForSecondsRealtime(1);yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../hud-preview.png"));var cue=d.enemies.Find(e=>e&&e.hp>0);d.player.hp=10000;d.player.transform.position=centers[1];cue.transform.position=d.player.transform.position+Vector3.right*.8f;yield return null;yield return null;yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../attack-windup.png"));map=true;yield return null;yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../hud-map.png"));yield return new WaitForSecondsRealtime(.5f);Application.Quit();}
     void Update()
     {
         if(!title&&!pause){if(Input.GetKeyDown(KeyCode.C))d.craftOpen=!d.craftOpen;if(Input.GetKeyDown(KeyCode.I))d.inventoryOpen=!d.inventoryOpen;if(Input.GetKeyDown(KeyCode.H))d.helpOpen=!d.helpOpen;}
@@ -203,9 +212,10 @@ public class AshfallBeta : MonoBehaviour
     SpriteRenderer Prop(int index,Vector2 p,float size,bool flip=false){var g=new GameObject("Scenery "+index);g.transform.position=p;g.transform.localScale=Vector3.one*size;var r=g.AddComponent<SpriteRenderer>();r.sprite=art[index];r.flipX=flip;r.sortingOrder=100-(int)(p.y*10);return r;}
     public static void Slash(Vector3 p,bool magic){CombatFX.Slash(p,Vector2.right,1.7f,false,magic);}
     public static void DamageNumber(Vector3 p,int amount){CombatFX.Number(p,amount);}
-    [Serializable]class SaveData{public int[] items;public int kills,tier,boss;public bool armor;public int ringA,ringB;public int version,sword,bow,staff,armorItem,weaponMode;}
-    void Save(){try{var p=d.player;var s=new SaveData{version=2,items=new int[Enum.GetValues(typeof(ItemId)).Length],kills=d.kills,tier=d.zoneTier,boss=d.bossState==2?2:0,armor=p.leatherArmor,ringA=(int)p.ringA,ringB=(int)p.ringB,sword=(int)p.swordSlot,bow=(int)p.bowSlot,staff=(int)p.staffSlot,armorItem=(int)p.armorSlot,weaponMode=(int)p.weapon};foreach(var kv in d.bag)s.items[(int)kv.Key]=kv.Value;File.WriteAllText(SavePath,JsonUtility.ToJson(s));}catch(Exception e){Debug.LogWarning("Save unavailable: "+e.Message);}}
-    void Load(){try{var s=JsonUtility.FromJson<SaveData>(File.ReadAllText(SavePath));if(s==null||s.items==null)throw new Exception("Invalid save.");if(s.version<2&&!File.Exists(SavePath+".pre-expansion.bak"))File.Copy(SavePath,SavePath+".pre-expansion.bak");foreach(ItemId i in Enum.GetValues(typeof(ItemId)))d.bag[i]=(int)i<s.items.Length?Mathf.Max(0,s.items[(int)i]):0;d.kills=s.kills;d.zoneTier=s.tier;d.bossState=s.boss;var p=d.player;p.leatherArmor=s.armor;p.ringA=ValidRing(s.ringA);p.ringB=ValidRing(s.ringB);if(s.version<2)ItemCatalog.MigrateGear(p);else{p.swordSlot=ValidWeapon(s.sword,0);p.bowSlot=ValidWeapon(s.bow,1);p.staffSlot=ValidWeapon(s.staff,2);p.armorSlot=ItemCatalog.IsArmor((ItemId)s.armorItem)&&d.Has((ItemId)s.armorItem,1)?(ItemId)s.armorItem:ItemId.Gold;p.weapon=(WeaponKind)Mathf.Clamp(s.weaponMode,0,2);}}catch(Exception e){d.Tell("Could not load save: "+e.Message);}}
+    [Serializable]class SaveData{public int[] items;public int kills,tier,boss;public bool armor;public int ringA,ringB;public int version,sword,bow,staff,armorItem,weaponMode;public ZoneRecord[] encounters;public int[] seals;public bool[] claimed;}
+    void Save(){try{d.journal.Capture(d);var p=d.player;var s=new SaveData{version=3,items=new int[Enum.GetValues(typeof(ItemId)).Length],kills=d.kills,tier=d.zoneTier,boss=d.bossState==2?2:0,armor=p.leatherArmor,ringA=(int)p.ringA,ringB=(int)p.ringB,sword=(int)p.swordSlot,bow=(int)p.bowSlot,staff=(int)p.staffSlot,armorItem=(int)p.armorSlot,weaponMode=(int)p.weapon,encounters=d.journal.records,seals=d.objectives?d.objectives.seals:null,claimed=d.objectives?d.objectives.claimed:null};foreach(var kv in d.bag)s.items[(int)kv.Key]=kv.Value;File.WriteAllText(SavePath,JsonUtility.ToJson(s));}catch(Exception e){Debug.LogWarning("Save unavailable: "+e.Message);}}
+    void Load(){try{var s=JsonUtility.FromJson<SaveData>(File.ReadAllText(SavePath));if(s==null||s.items==null)throw new Exception("Invalid save.");if(s.version<2&&!File.Exists(SavePath+".pre-expansion.bak"))File.Copy(SavePath,SavePath+".pre-expansion.bak");if(s.version<3&&!File.Exists(SavePath+".pre-expedition.bak"))File.Copy(SavePath,SavePath+".pre-expedition.bak");foreach(ItemId i in Enum.GetValues(typeof(ItemId)))d.bag[i]=(int)i<s.items.Length?Mathf.Max(0,s.items[(int)i]):0;d.kills=Mathf.Max(0,s.kills);d.zoneTier=Mathf.Max(0,s.tier);d.bossState=s.boss==2?2:0;var p=d.player;p.leatherArmor=s.armor;p.ringA=ValidRing(s.ringA);p.ringB=ValidRing(s.ringB);if(s.version<2)ItemCatalog.MigrateGear(p);else{p.swordSlot=ValidWeapon(s.sword,0);p.bowSlot=ValidWeapon(s.bow,1);p.staffSlot=ValidWeapon(s.staff,2);p.armorSlot=ItemCatalog.IsArmor((ItemId)s.armorItem)&&d.Has((ItemId)s.armorItem,1)?(ItemId)s.armorItem:ItemId.Gold;p.weapon=(WeaponKind)Mathf.Clamp(s.weaponMode,0,2);}d.journal.Load(s.encounters);if(d.objectives)d.objectives.Load(s.seals,s.claimed);d.SpawnZone(zones[0]);p.transform.position=centers[0];d.cam.transform.position=new Vector3(centers[0].x,centers[0].y,-10);}catch(Exception e){d.Tell("Could not load save: "+e.Message);}}
+    public void SaveJourney(){Save();}
     ItemId ValidWeapon(int i,int kind){return ItemCatalog.WeaponType((ItemId)i)==kind&&d.Has((ItemId)i,1)?(ItemId)i:ItemId.Gold;}
     ItemId ValidRing(int i){return ItemCatalog.IsRing((ItemId)i)&&d.Has((ItemId)i,1)?(ItemId)i:ItemId.Gold;}
     void OnApplicationQuit(){if(!title)Save();Time.timeScale=1;}
@@ -219,9 +229,9 @@ public class AshfallBeta : MonoBehaviour
     bool Button(Rect r,string s){return GUI.Button(r,s,button);}
     public Sprite QuickbarSprite(int slot){return WeaponArt.Get(WeaponArt.Slot(d.player,slot),(WeaponKind)slot);}
     void DrawWeaponBar(){
-        Panel(new Rect(350,630,575,74));
-        for(int i=0;i<3;i++){float x=358+i*154;bool active=(int)d.player.weapon==i;if(active){Fill(new Rect(x,636,150,61),gold);Fill(new Rect(x+2,638,146,57),new Color(.16f,.17f,.28f));}WeaponArt.Draw(QuickbarSprite(i),new Rect(x+7,640,38,50));Text(x+50,640,(i+1)+(active?"  ACTIVE":""),small,100);Text(x+50,665,WeaponArt.SlotName(d.player,i),small,100);}
-        Icon(12,new Rect(829,641,40,49));Text(874,640,"Q",small,40);Text(874,665,d.bag[ItemId.HealthPotion]+" left",small,48);
+        Panel(new Rect(405,653,470,53));
+        for(int i=0;i<3;i++){float x=412+i*116;bool active=(int)d.player.weapon==i;if(active){Fill(new Rect(x,659,112,40),gold);Fill(new Rect(x+2,661,108,36),new Color(.16f,.17f,.28f));}WeaponArt.Draw(QuickbarSprite(i),new Rect(x+5,662,29,33));Text(x+39,660,(i+1)+(active?" ACTIVE":""),small,72);Text(x+39,679,WeaponArt.SlotName(d.player,i),small,72);}
+        Icon(12,new Rect(766,662,28,34));Text(800,660,"Q  "+d.bag[ItemId.HealthPotion],small,65);Text(800,679,"potions",small,65);
     }
     void OnGUI()
     {
@@ -229,17 +239,17 @@ public class AshfallBeta : MonoBehaviour
         if(!atlas)return;Styles();GUI.depth=0;GUI.DrawTexture(new Rect(0,0,Screen.width,Screen.height),vignette);
         GUI.matrix=Matrix4x4.TRS(Vector3.zero,Quaternion.identity,new Vector3(Screen.width/1280f,Screen.height/720f,1));
         if(title){DrawTitle();GUI.matrix=Matrix4x4.identity;return;}
-        Panel(new Rect(24,24,284,105));Icon(0,new Rect(30,30,63,88));Text(104,33,"ASHEN",small);Text(227,33,Mathf.CeilToInt(d.player.hp)+" / "+d.player.MaxHp,small,80);Bar(104,60,185,d.player.hp/d.player.MaxHp,new Color(.72f,.25f,.22f));Bar(104,77,185,d.player.stamina/100,new Color(.37f,.62f,.57f));Text(104,94,"Lv. "+(1+d.kills/6)+"     "+d.bag[ItemId.Gold]+" gold",small);
-        Text(460,24,"A S H F A L L",heading);Text(440,605,d.player.SkillRemaining>0?"SKILL  "+d.player.SkillRemaining.ToString("0.0")+"s":"RMB  "+(d.player.weapon==WeaponKind.Sword?"WHIRLWIND":d.player.weapon==WeaponKind.Bow?"FAN SHOT":"EMBER NOVA")+"  /  35 stamina",small);Text(493,58,d.zone.ToUpper(),small);Text(1140,20,"BETA  0.6",small);
-        Text(24,137,"R Stamina x"+d.bag[ItemId.StaminaPotion]+"   F Fury x"+d.bag[ItemId.FuryPotion],small,360);
-        if(d.player.furyUntil>Time.time)Text(24,160,"FURY +30%  /  "+Mathf.CeilToInt(d.player.furyUntil-Time.time)+"s",small);
-        Panel(new Rect(991,57,265,97));Text(1007,69,"THE HOLLOW ROAD",small);Text(1007,96,d.bossState==2?"The Hollow Knight has fallen.":d.kills<6?"Hunt the forest creatures.":d.kills<18?"Gather strength. Find the dungeon.":"Defeat the Hollow Knight.",small,245);Text(1007,124,"[M] Map     "+d.kills+" creatures defeated",small);
+        if(map){DrawMap();GUI.matrix=Matrix4x4.identity;return;}if(d.craftOpen){DrawCraft();GUI.matrix=Matrix4x4.identity;return;}if(d.inventoryOpen){DrawPack();GUI.matrix=Matrix4x4.identity;return;}if(d.helpOpen){DrawHelp();GUI.matrix=Matrix4x4.identity;return;}if(pause){DrawPause();GUI.matrix=Matrix4x4.identity;return;}
+        Panel(new Rect(20,20,252,90));Text(32,28,"ASHEN   Lv. "+(1+d.kills/6),small,150);Text(197,28,Mathf.CeilToInt(d.player.hp)+" / "+d.player.MaxHp,small,70);Bar(32,51,225,d.player.hp/d.player.MaxHp,new Color(.72f,.25f,.22f));Bar(32,68,225,d.player.stamina/100,new Color(.37f,.62f,.57f));Text(32,84,d.bag[ItemId.Gold]+" gold   R "+d.bag[ItemId.StaminaPotion]+"   F "+d.bag[ItemId.FuryPotion],small,225);
+        Text(540,20,d.zone.ToUpper(),small,220);Text(450,626,d.player.SkillRemaining>0?"SKILL  "+d.player.SkillRemaining.ToString("0.0")+"s":"RMB  "+(d.player.weapon==WeaponKind.Sword?"WHIRLWIND":d.player.weapon==WeaponKind.Bow?"FAN SHOT":"EMBER NOVA")+"  /  35 stamina",small,380);
+        if(d.player.furyUntil>Time.time)Text(32,119,"FURY +30%  /  "+Mathf.CeilToInt(d.player.furyUntil-Time.time)+"s",small);
+        Panel(new Rect(986,20,271,84));Text(999,29,"EXPEDITION",small);Text(999,51,d.objectives?d.objectives.Status():"Explore the Hollow Road",small,246);Text(999,77,"M Map   "+d.kills+" defeated",small,246);
         DrawWeaponBar();world.Mini(small);
-        Text(26,659,"WASD Move   SPACE Dash   E Loot",small);Text(940,661,"RMB Skill   C Craft   I Gear   ESC",small);
-        if(Time.time<d.toastUntil){Panel(new Rect(300,550,680,39));Text(316,559,d.toast,small,654);}
+        Text(20,699,"WASD Move  •  SPACE Dash  •  E Interact",small,375);Text(900,699,"C Craft  •  I Gear  •  ESC Pause",small,350);
+        if(Time.time<d.toastUntil){Panel(new Rect(340,579,600,35));Text(355,587,d.toast,small,570);}
         foreach(var e in d.enemies)if(e&&e.hp<e.maxHp&&Vector2.Distance(e.transform.position,d.player.transform.position)<9){var p=d.cam.WorldToViewportPoint(e.transform.position+Vector3.up*1.7f);if(p.z>0)Bar(p.x*1280-24,(1-p.y)*720,48,e.hp/e.maxHp,new Color(.73f,.22f,.25f));}
-        if(d.bossState==1){var boss=d.enemies.Find(e=>e&&e.kind==EnemyKind.HollowKnight);if(boss){Panel(new Rect(370,91,540,51));Text(388,97,"THE HOLLOW KNIGHT",small);Bar(388,127,505,boss.hp/boss.maxHp,new Color(.58f,.3f,.68f));}}
-        if(d.craftOpen)DrawCraft();if(d.inventoryOpen)DrawPack();if(d.helpOpen)DrawHelp();if(map)DrawMap();if(pause)DrawPause();GUI.matrix=Matrix4x4.identity;
+        if(d.bossState==1){var boss=d.enemies.Find(e=>e&&e.kind==EnemyKind.HollowKnight);if(boss){Panel(new Rect(390,50,500,45));Text(407,56,"THE HOLLOW KNIGHT",small);Bar(407,80,466,boss.hp/boss.maxHp,new Color(.58f,.3f,.68f));}}
+        GUI.matrix=Matrix4x4.identity;
     }
     void DrawTitle(){Fill(new Rect(0,0,1280,720),new Color(.015f,.025f,.026f,.48f));Panel(new Rect(72,90,442,540));Text(112,122,"A DARK FANTASY SURVIVAL RPG",small);var big=new GUIStyle(heading){fontSize=58};Text(108,167,"ASHFALL",big);Text(113,246,"FROM THE ASHES, YOU RISE.",small);Text(113,298,"A ruined village. A forest of hungry things.\nForge what you need to face the darkness.",label,365);if(Button(new Rect(113,397,355,48),"Begin journey")){title=false;d.Tell("Welcome to Ashfall. Hold left mouse to attack. Press M to travel.");}if(File.Exists(SavePath)&&Button(new Rect(113,456,355,48),"Continue saved journey")){Load();title=false;}if(Button(new Rect(113,526,355,40),"Exit game"))Application.Quit();Text(112,590,"BETA 0.6  /  DEPTH & MOTION",small);}
     void DrawPause(){Panel(new Rect(440,220,400,262));Text(471,247,"REST A MOMENT",heading);if(Button(new Rect(470,304,340,43),"Resume"))pause=false;if(Button(new Rect(470,357,340,43),"Save journey")){Save();d.Tell("Journey saved.");}if(Button(new Rect(470,410,340,43),"Save and exit")){Save();Application.Quit();}}
@@ -273,7 +283,10 @@ public class AshfallBeta : MonoBehaviour
     void DrawHelp(){Panel(new Rect(280,174,720,366));Text(305,194,"SURVIVAL GUIDE",heading);Text(305,247,"WASD to move. Aim with the mouse. Hold left mouse to attack.\n1 / 2 / 3 switch weapons. Space dashes. E collects loot (also picked up nearby).\nRMB: sword whirlwind / bow fan / staff nova (35 stamina).\nQ health. R stamina potion. F fury potion. C craft. I gear. M map.\n\nHunt six enemies to open the Mountain; twelve for the Wasteland;\neighteen for the Dungeon. Marsh: 8 kills; Caverns: 16.\nCitadel: 30 kills + Hollow Knight. Follow E route gates or M atlas.\n\nProgress saves every 30 seconds and on exit. Continue at the village.\nPress H or ESC to return.",label,676);}
     public void OpenMap(){map=true;}public void CloseMap(){map=false;}
     void DrawMap(){world.Draw(heading,small);}
-    public void Travel(int i){d.zone=zones[i];d.player.transform.position=centers[i];d.SpawnZone(d.zone);if(i==0)d.player.hp=d.player.MaxHp;d.cam.transform.position=new Vector3(centers[i].x,centers[i].y,-10);Save();}
+    public bool CanTravel(int i,out string reason){if(i<0||i>=zones.Length){reason="Unknown route.";return false;}int current=WorldAtlas.Index(d.zone);if(i==current){reason="You are already in "+zones[i]+".";return false;}if(!WorldAtlas.Unlocked(i,d)){reason="Sealed: requires "+WorldAtlas.Requirements[i]+" kills"+(i==7?" and the Hollow Knight defeated.":".");return false;}if(!WorldAtlas.Neighbors(current).Contains(i)){reason="Travel through a connected route first.";return false;}if(CombatRules.InCombat(d)){reason="Cannot travel while enemies are engaged.";return false;}Vector2 gate=WorldAtlas.Centers[current]+WorldAtlas.Gate(current,i);if(Vector2.Distance(d.player.transform.position,gate)>1.8f){reason="Reach the cyan route marker to travel.";return false;}reason="Route is clear.";return true;}
+    public bool TryTravel(int i){string reason;if(!CanTravel(i,out reason)){d.Tell(reason);return false;}CompleteTravel(i);return true;}
+    void TravelForTest(int i){if(!Testing)throw new InvalidOperationException("Test travel is only available during QA runs.");CompleteTravel(i);}
+    void CompleteTravel(int i){d.SpawnZone(zones[i]);d.player.transform.position=centers[i];if(i==0)d.player.hp=d.player.MaxHp;d.cam.transform.position=new Vector3(centers[i].x,centers[i].y,-10);Save();}
 
 }
 
@@ -288,14 +301,15 @@ public class BetaActor : MonoBehaviour
     void LateUpdate(){
         if(!sprite)return;
         Vector3 motion=transform.position-last;bool walking=motion.sqrMagnitude>.00001f;phase+=Time.deltaTime*(walking?16:3);
-        if(enemy){frameClock+=Time.deltaTime*(walking?9:2);AnimationFrame=PreviewFrame>=0?PreviewFrame%4:walking||enemy.kind==EnemyKind.CaveBat||enemy.kind==EnemyKind.Slime?(int)frameClock%4:(int)frameClock%2;sprite.sprite=SpriteFrames.Mob(enemy.kind,AnimationFrame);}
+        if(enemy){frameClock+=Time.deltaTime*(walking?9:2);AnimationFrame=PreviewFrame>=0?PreviewFrame%4:enemy.AttackStage==EnemyAttackStage.Windup?1:enemy.AttackStage==EnemyAttackStage.Strike?3:enemy.AttackStage==EnemyAttackStage.Recovery?0:walking||enemy.kind==EnemyKind.CaveBat||enemy.kind==EnemyKind.Slime?(int)frameClock%4:(int)frameClock%2;sprite.sprite=SpriteFrames.Mob(enemy.kind,AnimationFrame);}
         float bob=Mathf.Sin(phase)*(walking?.035f:.008f);
-        transform.localScale=new Vector3(size*(1-bob*.3f),size*(1+bob),1);
-        sprite.color=Time.time<flashUntil?new Color(2,1.8f,2):loot&&ItemCatalog.WeaponType(loot.item)<0?ItemCatalog.Tint(loot.item):Color.white;
+        float scaleX=size*(1-bob*.3f),scaleY=size*(1+bob);if(enemy&&enemy.AttackStage==EnemyAttackStage.Windup){float pulse=.04f*Mathf.Sin(Time.time*35);scaleX*=1.08f+pulse;scaleY*=.88f-pulse;}else if(enemy&&enemy.AttackStage==EnemyAttackStage.Strike){scaleX*=1.22f;scaleY*=.82f;}else if(enemy&&enemy.AttackStage==EnemyAttackStage.Recovery){scaleX*=.96f;scaleY*=1.04f;}transform.localScale=new Vector3(scaleX,scaleY,1);
+        sprite.color=Time.time<flashUntil?new Color(2,1.8f,2):enemy&&enemy.AttackStage==EnemyAttackStage.Windup?new Color(1.35f,.72f,.48f):enemy&&enemy.AttackStage==EnemyAttackStage.Strike?new Color(1.6f,1.15f,.8f):enemy&&enemy.AttackStage==EnemyAttackStage.Recovery?new Color(.72f,.76f,.8f):loot&&ItemCatalog.WeaponType(loot.item)<0?ItemCatalog.Tint(loot.item):Color.white;
         sprite.sortingOrder=110-(int)(transform.position.y*10);
         if(hero&&!AshfallBeta.Paused)sprite.flipX=player.Aim.x<0;
+        else if(enemy&&enemy.AttackStage!=EnemyAttackStage.None&&Mathf.Abs(enemy.AttackDirection.x)>.01f)sprite.flipX=enemy.AttackDirection.x<0;
         else if(Mathf.Abs(motion.x)>.001f)sprite.flipX=motion.x<0;
-        if(walking&&!AshfallBeta.Paused&&Time.time>dustAt){dustAt=Time.time+.14f;CombatFX.Spark(transform.position,Vector2.up*.2f,new Color(.75f,.72f,.5f,.5f),.24f,.13f);}
+        if(walking&&!AshfallBeta.Paused&&(!enemy||enemy.AttackStage==EnemyAttackStage.None)&&Time.time>dustAt){dustAt=Time.time+.14f;CombatFX.Spark(transform.position,Vector2.up*.2f,new Color(.75f,.72f,.5f,.5f),.24f,.13f);}
         last=transform.position;
     }
 }

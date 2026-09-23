@@ -21,11 +21,11 @@ public static class AshfallBuild
         PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64,new[]{UnityEngine.Rendering.GraphicsDeviceType.Direct3D11});
         PlayerSettings.defaultScreenHeight=720;
         PlayerSettings.fullScreenMode=UnityEngine.FullScreenMode.Windowed;
-        Directory.CreateDirectory("Builds/DepthAndMotion");
+        Directory.CreateDirectory("Builds/ExpeditionIntegration");
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { ScenePath },
-            locationPathName = "Builds/DepthAndMotion/Ashfall.exe",
+            locationPathName = "Builds/ExpeditionIntegration/Ashfall.exe",
             target = BuildTarget.StandaloneWindows64,
             options = BuildOptions.None
         });

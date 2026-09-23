@@ -131,14 +131,20 @@ public class HeroProjectile : MonoBehaviour
     }
 }
 
+public enum EnemyAttackStage { None, Windup, Strike, Recovery }
+
 public class EnemyActor : MonoBehaviour
 {
     public AshfallDirector director;public EnemyKind kind;public float hp,maxHp,speed,damage;
     public float burnUntil,chillUntil,poisonUntil,shockUntil;float nextBurn,nextPoison,nextRanged,nextSlam;
-    float nextAttack,nextDash,nextGround,stunUntil,windup,dashUntil;bool phaseTwo,preparing;Vector2 knock,dash;
+    float nextAttack,nextDash,nextGround,stunUntil,windup,dashUntil,stageUntil;bool phaseTwo,preparing,dashHit;Vector2 knock,dash;int attackToken;
+    public EnemyAttackStage AttackStage {get;private set;}public Vector2 AttackDirection {get;private set;}public bool PhaseTwo {get{return phaseTwo;}}
     public void Setup(bool elite){switch(kind){case EnemyKind.Slime:maxHp=24;speed=1.5f;damage=6;break;case EnemyKind.Wolf:maxHp=38;speed=2.8f;damage=9;break;case EnemyKind.Skeleton:maxHp=48;speed=1.7f;damage=11;break;case EnemyKind.Goblin:maxHp=34;speed=2.2f;damage=8;break;case EnemyKind.ForestBeast:maxHp=110;speed=1.3f;damage=17;break;default:maxHp=300;speed=2.3f;damage=18;break;}ExpansionContent.Setup(this);if(elite&&kind!=EnemyKind.HollowKnight){maxHp*=1.35f;damage*=1.18f;}hp=maxHp;nextDash=Time.time+2;}
+    void Cue(EnemyAttackStage stage,float duration,Vector2 direction){AttackStage=stage;stageUntil=Time.time+duration;if(direction.sqrMagnitude>.01f)AttackDirection=direction.normalized;}
+    public void RestorePhase(bool value){phaseTwo=value&&kind==EnemyKind.HollowKnight;if(phaseTwo){speed=Mathf.Max(speed,3.1f);damage=Mathf.Max(damage,24);nextGround=Time.time+1.2f;}}
     void Update(){
         if(AshfallBeta.Paused||!director||!director.player)return;
+        if(AttackStage==EnemyAttackStage.Recovery&&Time.time>=stageUntil)AttackStage=EnemyAttackStage.None;
         if(Time.time<burnUntil&&Time.time>=nextBurn){nextBurn=Time.time+.6f;TakeDamage(2);if(hp<=0)return;CombatFX.Spark(transform.position,Vector2.up,new Color(1,.4f,.2f));}
         Vector2 prior=transform.position;
         if(Time.time<poisonUntil&&Time.time>=nextPoison){nextPoison=Time.time+.6f;TakeDamage(3);if(hp<=0)return;CombatFX.Spark(transform.position,Vector2.up,Color.green);}
@@ -148,22 +154,25 @@ public class EnemyActor : MonoBehaviour
         int navArea=WorldAtlas.Index(director.zone);Vector2 toward=WorldAtlas.Chase(navArea,(Vector2)transform.position-WorldAtlas.Centers[navArea],(Vector2)director.player.transform.position-WorldAtlas.Centers[navArea]);
         if(kind==EnemyKind.HollowKnight&&hp<maxHp*.5f&&!phaseTwo){phaseTwo=true;speed=3.1f;damage=24;nextGround=Time.time+1.2f;director.Tell("HOLLOW KNIGHT: PHASE TWO");director.Spawn(EnemyKind.Skeleton,3,true);}
         if(Time.time<stunUntil){Vector2 c=WorldAtlas.Centers[navArea];transform.position=WorldAtlas.Constrain(navArea,prior-c,(Vector2)transform.position-c)+c;return;}
-        if(Time.time<dashUntil){transform.position+=(Vector3)dash*Time.deltaTime*11;}
-        else if(!preparing&&dist<11&&dist>((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)?4:.7f)){
+        if(dashUntil>0&&Time.time<dashUntil){transform.position+=(Vector3)dash*Time.deltaTime*11;if(!dashHit&&Vector2.Distance(transform.position,director.player.transform.position)<1.05f&&CombatRules.Clear(director,transform.position,director.player.transform.position)){dashHit=true;nextAttack=Time.time+.65f;director.player.Hurt(damage);}}
+        else if(dashUntil>0){dashUntil=0;Cue(EnemyAttackStage.Recovery,.34f,dash);}
+        else if(!preparing&&AttackStage==EnemyAttackStage.None&&dist<11&&dist>((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)?4:.7f)){
             Vector2 separation=Vector2.zero;
             foreach(var other in director.enemies)if(other&&other!=this){Vector2 delta=transform.position-other.transform.position;if(delta.sqrMagnitude<.65f&&delta.sqrMagnitude>.001f)separation+=delta.normalized*.8f;}
             transform.position+=(Vector3)(toward*speed*(Time.time<chillUntil?.55f:1)+separation)*Time.deltaTime;
         }
-        if((kind==EnemyKind.Wolf||kind==EnemyKind.HollowKnight||kind==EnemyKind.CaveBat||kind==EnemyKind.Scorpion||kind==EnemyKind.DarkKnight)&&Time.time>nextDash&&dist>2&&dist<7&&!preparing){preparing=true;windup=Time.time+.45f;dash=toward;nextDash=Time.time+3.2f;CombatFX.Telegraph(transform.position,(Vector2)transform.position+dash*3.8f,.45f);}
-        if(preparing&&Time.time>windup){preparing=false;dashUntil=Time.time+.3f;}
-        if(kind==EnemyKind.HollowKnight&&phaseTwo&&Time.time>nextGround){CreateGroundPulse();nextGround=Time.time+2.8f;}
-        if((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)&&dist<9&&Time.time>nextRanged){nextRanged=Time.time+2.2f;CombatFX.Ring(transform.position,.9f,Color.cyan,.4f);StartCoroutine(Cast(toward));}
-        if((kind==EnemyKind.StoneGolem||kind==EnemyKind.DarkKnight)&&dist<3.5f&&Time.time>nextSlam){nextSlam=Time.time+4;CreateGroundPulse();}
+        if((kind==EnemyKind.Wolf||kind==EnemyKind.HollowKnight||kind==EnemyKind.CaveBat||kind==EnemyKind.Scorpion||kind==EnemyKind.DarkKnight)&&Time.time>nextDash&&dist>2&&dist<7&&!preparing&&AttackStage==EnemyAttackStage.None){preparing=true;windup=Time.time+.45f;dash=toward;nextDash=Time.time+3.2f;Cue(EnemyAttackStage.Windup,.45f,dash);CombatFX.Telegraph(transform.position,(Vector2)transform.position+dash*3.8f,.45f);}
+        if(preparing&&Time.time>windup){preparing=false;dashHit=false;dashUntil=Time.time+.3f;Cue(EnemyAttackStage.Strike,.3f,dash);}
+        if(kind==EnemyKind.HollowKnight&&phaseTwo&&Time.time>nextGround&&AttackStage==EnemyAttackStage.None){nextGround=Time.time+2.8f;StartCoroutine(Slam());}
+        if((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None){nextRanged=Time.time+2.2f;StartCoroutine(Cast(toward));}
+        if((kind==EnemyKind.StoneGolem||kind==EnemyKind.DarkKnight)&&dist<3.5f&&Time.time>nextSlam&&AttackStage==EnemyAttackStage.None){nextSlam=Time.time+4;StartCoroutine(Slam());}
         int area=WorldAtlas.Index(director.zone);Vector2 home=WorldAtlas.Centers[area];transform.position=WorldAtlas.Constrain(area,prior-home,(Vector2)transform.position-home)+home;
-        if(dist<1&&Time.time>nextAttack){director.player.Hurt(damage);nextAttack=Time.time+(kind==EnemyKind.Wolf?.75f:1.1f);}
+        if(dist<1&&Time.time>nextAttack&&AttackStage==EnemyAttackStage.None&&!preparing&&dashUntil<=0){nextAttack=Time.time+(kind==EnemyKind.Wolf?.9f:1.25f);StartCoroutine(MeleeStrike(toward));}
     }
-    System.Collections.IEnumerator Cast(Vector2 aim){yield return new WaitForSeconds(.45f);if(hp<=0)yield break;var g=new GameObject("Enemy spell");g.transform.position=transform.position+Vector3.up*.3f;var b=g.AddComponent<EnemyBolt>();b.director=director;b.velocity=aim*5.5f;b.damage=damage;b.color=kind==EnemyKind.IceWraith?Color.cyan:new Color(.5f,1,.2f);}
-    public void Impact(Vector2 force){knock=force*(kind==EnemyKind.HollowKnight?.35f:1);stunUntil=Time.time+.13f;preparing=false;var a=GetComponent<BetaActor>();if(a)a.Flash();}
+    System.Collections.IEnumerator MeleeStrike(Vector2 aim){int token=++attackToken;Cue(EnemyAttackStage.Windup,.24f,aim);CombatFX.Ring(transform.position,.75f,new Color(1,.35f,.2f),.24f);yield return new WaitForSeconds(.24f);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.11f,aim);if(Vector2.Distance(transform.position,director.player.transform.position)<1.25f&&CombatRules.Clear(director,transform.position,director.player.transform.position))director.player.Hurt(damage);yield return new WaitForSeconds(.11f);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.3f,aim);}
+    System.Collections.IEnumerator Cast(Vector2 aim){int token=++attackToken;Cue(EnemyAttackStage.Windup,.45f,aim);CombatFX.Ring(transform.position,.9f,Color.cyan,.45f);yield return new WaitForSeconds(.45f);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.12f,aim);var g=new GameObject("Enemy spell");g.transform.position=transform.position+Vector3.up*.3f;var b=g.AddComponent<EnemyBolt>();b.director=director;b.velocity=aim*5.5f;b.damage=damage;b.color=kind==EnemyKind.IceWraith?Color.cyan:new Color(.5f,1,.2f);yield return new WaitForSeconds(.12f);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.32f,aim);}
+    System.Collections.IEnumerator Slam(){int token=++attackToken;Vector2 aim=(director.player.transform.position-transform.position).normalized;Cue(EnemyAttackStage.Windup,.5f,aim);CombatFX.Ring(transform.position,3.1f,new Color(1,.2f,.55f),.5f);yield return new WaitForSeconds(.5f);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.14f,aim);CreateGroundPulse();yield return new WaitForSeconds(.14f);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.4f,aim);}
+    public void Impact(Vector2 force){knock=force*(kind==EnemyKind.HollowKnight?.35f:1);stunUntil=Time.time+.13f;preparing=false;dashUntil=0;attackToken++;AttackStage=EnemyAttackStage.None;var a=GetComponent<BetaActor>();if(a)a.Flash();}
     void CreateGroundPulse(){var g=new GameObject("Gravefall");g.transform.position=transform.position;var p=g.AddComponent<GroundPulse>();p.director=director;p.damage=20;CombatFX.Ring(transform.position,3.1f,new Color(.9f,.25f,1),.75f);director.Tell("GRAVEFALL! Dodge out of the circle.");}
     public void TakeDamage(int d,ItemId? source=null){if(hp<=0||d<=0)return;float dealt=Mathf.Min(hp,d);hp-=dealt;director.combatUntil=Time.time+6;if(source==ItemId.DuskStaff)director.player.hp=Mathf.Min(director.player.MaxHp,director.player.hp+dealt*.05f);AshfallBeta.DamageNumber(transform.position,Mathf.CeilToInt(dealt));CombatFX.Burst(transform.position+Vector3.up*.4f,new Color(1,.85f,.35f),7);CombatFX.Kick(.025f);CombatFX.Sound(6);director.player.Lifesteal(dealt);if(hp<=0){CombatFX.Burst(transform.position,new Color(.6f,.45f,.85f),12);director.EnemyDied(this);}}
 }
