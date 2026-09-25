@@ -18,7 +18,7 @@ public static class ExpansionContent
 
 public class EnemyBolt : MonoBehaviour
 {
-    public AshfallDirector director;public Vector2 velocity;public float damage;public Color color;float life=4;
+    public AshfallDirector director;public EnemyActor owner;public Vector2 velocity;public float damage;public Color color;float life=4;
     void Start(){var r=gameObject.AddComponent<SpriteRenderer>();r.sprite=CombatFX.Orb;r.color=color;r.sortingOrder=1600;transform.localScale=Vector3.one*.3f;}
-    void Update(){if(AshfallBeta.Paused)return;Vector2 before=transform.position;Vector2 next=before+velocity*Time.deltaTime,hit;bool clear=CombatRules.Trace(director,before-Vector2.up*.3f,next-Vector2.up*.3f,out hit);transform.position=hit+Vector2.up*.3f;life-=Time.deltaTime;if(life<=0){Destroy(gameObject);return;}if(WorldAtlas.Segment(director.player.transform.position,before,transform.position)<.45f){director.player.Hurt(damage);CombatFX.Burst(transform.position,color,5);Destroy(gameObject);}if(!clear)Destroy(gameObject);}
+    void Update(){if(AshfallBeta.Paused)return;Vector2 before=transform.position;Vector2 next=before+velocity*Time.deltaTime,hit;bool clear=CombatRules.Trace(director,before-Vector2.up*.3f,next-Vector2.up*.3f,out hit);transform.position=hit+Vector2.up*.3f;life-=Time.deltaTime;if(life<=0){Destroy(gameObject);return;}if(WorldAtlas.Segment(director.player.transform.position,before,transform.position)<.45f){if(owner)owner.HitPlayer(damage);else director.player.Hurt(damage);CombatFX.Burst(transform.position,color,5);Destroy(gameObject);}if(!clear)Destroy(gameObject);}
 }
