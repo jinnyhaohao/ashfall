@@ -10,7 +10,7 @@ public class ExpeditionObjectives : MonoBehaviour
     public bool[] started=new bool[8],completed=new bool[8],claimed=new bool[8];
     public int[] seals=new int[8]; // Version 3 compatibility view.
     readonly SpriteRenderer[,] markers=new SpriteRenderer[8,4];
-    readonly float[] defenseClock=new float[8],defenseDamage=new float[8];
+    readonly float[] defenseClock=new float[8],defenseDamage=new float[8],defenseGraceUntil=new float[8];
     AshfallDirector d;
     public static readonly ObjectiveType[] Types={ObjectiveType.None,ObjectiveType.CorruptedAnchors,ObjectiveType.SurvivalWaves,ObjectiveType.DefendRelic,ObjectiveType.EliteHunt,ObjectiveType.CorruptedAnchors,ObjectiveType.SurvivalWaves,ObjectiveType.DefendRelic};
     public static readonly string[] Titles={"Village refuge","Shatter corrupted anchors","Survive the deep ambush","Defend the caravan relic","Hunt the grave champion","Sever the drowned roots","Endure the prism assault","Hold the fallen crown"};
@@ -33,6 +33,7 @@ public class ExpeditionObjectives : MonoBehaviour
     {
         if(z<=0||z>=8||claimed[z])return;
         if(Type(z)==ObjectiveType.CorruptedAnchors)for(int slot=0;slot<3;slot++)if((progress[z]&(1<<slot))==0&&(!restored||!Guarded(z,slot)))SpawnAt(z,slot,GuardKind(z),1,EliteModifier.None,false);
+        if(restored&&Type(z)==ObjectiveType.DefendRelic&&started[z])RelocateDefenders(z);
         if(!completed[z]&&started[z])Resume(z);
         if(!restored||!EliteGuarded(z,3))SpawnAt(z,3,GuardKind(z),2,EliteRules.ForZone(z),false);
     }
@@ -68,7 +69,9 @@ public class ExpeditionObjectives : MonoBehaviour
     }
 
     void SpawnWave(int z){if(progress[z]>=3){Complete(z);return;}SpawnAt(z,0,GuardKind(z),3+progress[z],EliteModifier.None,true);d.Tell("Ambush wave "+(progress[z]+1)+" / 3");}
-    void SpawnDefenders(int z){SpawnAt(z,0,GuardKind(z),4,progress[z]>=15?EliteModifier.Swift:EliteModifier.None,true);}
+    Vector2 DefenseApproach(int z,int ordinal){var rooms=WorldAtlas.Rooms[z];int room=ordinal%2==0?0:Mathf.Min(2,rooms.Length-1);Vector2 offset=new Vector2(ordinal<2?-1.35f:1.35f,ordinal%2==0?.8f:-.8f);return WorldAtlas.Centers[z]+WorldAtlas.Recover(z,rooms[room]+offset);}
+    void RelocateDefenders(int z){int i=0;foreach(var e in d.enemies)if(e&&e.objectiveTarget&&Vector2.Distance(e.transform.position,Position(z,0))<4)e.transform.position=DefenseApproach(z,i++);defenseGraceUntil[z]=Time.time+2;}
+    void SpawnDefenders(int z){int start=d.enemies.Count;d.Spawn(GuardKind(z),4,progress[z]>=15?EliteModifier.Swift:EliteModifier.None);for(int i=0;i<4;i++){var e=d.enemies[start+i];e.transform.position=DefenseApproach(z,i);e.objectiveTarget=true;}defenseGraceUntil[z]=Time.time+2;CombatFX.Ring(Position(z,0),2.6f,new Color(.25f,.9f,1),2);d.Tell("Attackers incoming from the outer chambers!");}
     void SpawnHunt(int z){SpawnAt(z,0,GuardKind(z),1,EliteRules.ForZone(z),true);}
 
     public void NotifyEnemyDied(EnemyActor e)
@@ -81,7 +84,7 @@ public class ExpeditionObjectives : MonoBehaviour
     public void TickDefense(float seconds)
     {
         int z=WorldAtlas.Index(d.zone);if(z<=0||Type(z)!=ObjectiveType.DefendRelic||!started[z]||completed[z])return;
-        defenseClock[z]+=seconds;int threats=0;foreach(var e in d.enemies)if(e&&e.objectiveTarget&&Vector2.Distance(e.transform.position,Position(z,0))<2.6f)threats++;
+        defenseClock[z]+=seconds;int threats=0;if(Time.time>=defenseGraceUntil[z])foreach(var e in d.enemies)if(e&&e.objectiveTarget&&Vector2.Distance(e.transform.position,Position(z,0))<2.6f)threats++;
         if(threats>0){defenseDamage[z]+=threats*7*seconds;int loss=Mathf.FloorToInt(defenseDamage[z]);if(loss>0){aux[z]=Mathf.Max(0,aux[z]-loss);defenseDamage[z]-=loss;}}
         if(defenseClock[z]>=1){int whole=Mathf.FloorToInt(defenseClock[z]);defenseClock[z]-=whole;progress[z]+=whole;if(progress[z]%5==0){CombatFX.Ring(Position(z,0),1.2f,new Color(.3f,.9f,1));Save();}}
         if(aux[z]<=0){started[z]=false;progress[z]=0;aux[z]=100;foreach(var e in d.enemies)if(e&&e.objectiveTarget)e.objectiveTarget=false;d.Tell("The relic was overwhelmed. Regroup and try again.");Save();}
@@ -96,7 +99,7 @@ public class ExpeditionObjectives : MonoBehaviour
     void Save(){if(AshfallBeta.Instance)AshfallBeta.Instance.SaveJourney();}
     public int AnchorCount(int z){int n=0;for(int i=0;i<3;i++)if((progress[z]&(1<<i))!=0)n++;return n;}
     public int Count(int z){return AnchorCount(z);}
-    public string Status(){int z=WorldAtlas.Index(d.zone);if(z==0)return Titles[0];if(claimed[z])return "Expedition cache secured";if(completed[z])return "Objective complete / cache guarded";switch(Type(z)){case ObjectiveType.CorruptedAnchors:return Titles[z]+"  "+AnchorCount(z)+" / 3";case ObjectiveType.SurvivalWaves:return started[z]?Titles[z]+"  wave "+Mathf.Min(3,progress[z]+1)+" / 3":Titles[z];case ObjectiveType.DefendRelic:return started[z]?"Relic "+aux[z]+"%  /  "+progress[z]+" / 30s":Titles[z];default:return started[z]?"Marked champion active":Titles[z];}}
+    public string Status(){int z=WorldAtlas.Index(d.zone);if(z==0)return Titles[0];if(claimed[z])return "Expedition cache secured";if(completed[z])return "Objective complete / cache guarded";switch(Type(z)){case ObjectiveType.CorruptedAnchors:return Titles[z]+"  "+AnchorCount(z)+" / 3";case ObjectiveType.SurvivalWaves:return started[z]?Titles[z]+"  wave "+Mathf.Min(3,progress[z]+1)+" / 3":Titles[z];case ObjectiveType.DefendRelic:return started[z]?"Relic "+aux[z]+"%  /  "+(Time.time<defenseGraceUntil[z]?"INCOMING":progress[z]+" / 30s"):Titles[z];default:return started[z]?"Marked champion active":Titles[z];}}
 
     public void Load(int[] savedProgress,int[] savedAux,bool[] savedStarted,bool[] savedCompleted,bool[] savedClaimed,int[] legacySeals)
     {
