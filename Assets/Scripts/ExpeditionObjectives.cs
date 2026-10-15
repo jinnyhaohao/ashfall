@@ -10,7 +10,6 @@ public class ExpeditionObjectives : MonoBehaviour
     public bool[] started=new bool[8],completed=new bool[8],claimed=new bool[8];
     public int[] seals=new int[8]; // Version 3 compatibility view.
     readonly SpriteRenderer[,] markers=new SpriteRenderer[8,4];
-    readonly ObjectiveMarkerCue[,] markerCues=new ObjectiveMarkerCue[8,4];
     readonly float[] defenseClock=new float[8],defenseDamage=new float[8],defenseGraceUntil=new float[8];
     AshfallDirector d;
     public static readonly ObjectiveType[] Types={ObjectiveType.None,ObjectiveType.CorruptedAnchors,ObjectiveType.SurvivalWaves,ObjectiveType.DefendRelic,ObjectiveType.EliteHunt,ObjectiveType.CorruptedAnchors,ObjectiveType.SurvivalWaves,ObjectiveType.DefendRelic};
@@ -26,7 +25,7 @@ public class ExpeditionObjectives : MonoBehaviour
         for(int z=1;z<8;z++)for(int i=0;i<4;i++){
             if(!UsesMarker(z,i))continue;
             string title=i==3?"Guarded reward cache":Type(z)==ObjectiveType.CorruptedAnchors?"Corrupted anchor":Type(z)==ObjectiveType.SurvivalWaves?"Challenge brazier":Type(z)==ObjectiveType.DefendRelic?"Expedition relic":"Hunt sigil";
-            var g=new GameObject(title);g.transform.position=Position(z,i);g.transform.localScale=Vector3.one*(i==3?.85f:Type(z)==ObjectiveType.SurvivalWaves?.66f:Type(z)==ObjectiveType.DefendRelic?.74f:Type(z)==ObjectiveType.EliteHunt?.72f:.68f);var r=g.AddComponent<SpriteRenderer>();r.sprite=i==3?cache:Type(z)==ObjectiveType.SurvivalWaves?brazier:Type(z)==ObjectiveType.DefendRelic?relic:Type(z)==ObjectiveType.EliteHunt?hunt:art[11];r.sortingOrder=108-(int)(g.transform.position.y*10);markers[z,i]=r;var cue=g.AddComponent<ObjectiveMarkerCue>();cue.Initialize(this,z,i,Type(z),r.sortingOrder-1);markerCues[z,i]=cue;
+            var g=new GameObject(title);g.transform.position=Position(z,i);g.transform.localScale=Vector3.one*(i==3?.85f:Type(z)==ObjectiveType.SurvivalWaves?.66f:Type(z)==ObjectiveType.DefendRelic?.74f:Type(z)==ObjectiveType.EliteHunt?.72f:.68f);var r=g.AddComponent<SpriteRenderer>();r.sprite=i==3?cache:Type(z)==ObjectiveType.SurvivalWaves?brazier:Type(z)==ObjectiveType.DefendRelic?relic:Type(z)==ObjectiveType.EliteHunt?hunt:art[11];r.sortingOrder=108-(int)(g.transform.position.y*10);markers[z,i]=r;g.AddComponent<ObjectiveMarkerCue>().Initialize(this,z,i,Type(z),r.sortingOrder-1);
         }
     }
 
