@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 public class PlayerHero : MonoBehaviour
 {
+    public const float InputBufferSeconds=.12f;
     public AshfallDirector director;
     public float hp=100,stamina=100,MaxStamina=100;
     public bool leatherArmor;
@@ -13,6 +14,7 @@ public class PlayerHero : MonoBehaviour
     public ItemId ringA=ItemId.Gold,ringB=ItemId.Gold;
     public WeaponKind weapon=WeaponKind.Sword;
     float cooldown,dodgeUntil,invulnerableUntil,skillUntil,lastAttack,ghostAt;
+    float attackBufferedUntil=-1,specialBufferedUntil=-1,poisonUntil,nextPoisonTick,poisonDamage;
     int combo;
     Vector2 facing=Vector2.right,dodgeDirection,velocity;
     Vector2 attackStep;float attackStepUntil;
@@ -22,9 +24,17 @@ public class PlayerHero : MonoBehaviour
     public float MaxHp {get{return armorSlot==ItemId.IronArmor?160:armorSlot==ItemId.BoneArmor?140:armorSlot==ItemId.LeatherArmor||leatherArmor?125:100;}}
     public string WeaponName {get{return ItemCatalog.WeaponName(this);}}
     public int Damage {get{return Mathf.CeilToInt(ItemCatalog.Damage(this)*(Time.time<furyUntil?1.3f:1));}}
+    public float AttackBufferRemaining {get{return Mathf.Max(0,attackBufferedUntil-Time.time);}}
+    public float SpecialBufferRemaining {get{return Mathf.Max(0,specialBufferedUntil-Time.time);}}
+    public float PoisonRemaining {get{return Mathf.Max(0,poisonUntil-Time.time);}}
     void Update()
     {
         if(AshfallBeta.Paused)return;
+        // Read combat presses during local hit-stop so a late press is still honored afterwards.
+        if(Input.GetMouseButtonDown(1))BufferSpecial();
+        else if(Input.GetMouseButton(0))BufferAttack();
+        if(CombatHitStop.Active)return;
+        if(Time.time<poisonUntil&&Time.time>=nextPoisonTick){nextPoisonTick=Time.time+.7f;Hurt(poisonDamage);CombatFX.Spark(transform.position+Vector3.up*.35f,Vector2.up,new Color(.35f,1,.3f));}
         Vector2 input=new Vector2(Input.GetAxisRaw("Horizontal"),Input.GetAxisRaw("Vertical")).normalized;
         if(input.sqrMagnitude>.01f)facing=input;
         if(Input.GetKeyDown(KeyCode.R))ItemCatalog.Use(this,ItemId.StaminaPotion);
@@ -41,15 +51,20 @@ public class PlayerHero : MonoBehaviour
         if(Dodging&&Time.time>ghostAt){ghostAt=Time.time+.035f;CombatFX.Ghost(GetComponent<SpriteRenderer>());}
         stamina=Mathf.Min(MaxStamina,stamina+(HasRing(ItemId.RingHaste)?33:28)*Time.deltaTime);
         hp=Mathf.Min(hp,MaxHp);
-        if(!Dodging){
-            if(Input.GetMouseButtonDown(1))Special();
-            else if(Input.GetMouseButton(0))Attack();
-        }
-        if(hp<=0){hp=MaxHp;transform.position=Vector3.zero;director.zone="Ruined Village";director.SpawnZone(director.zone);director.Tell("Back at the fire. Try dodging through attacks!");}
+        if(!Dodging)ConsumeBufferedActions();
+        if(hp<=0)RecoverFromDefeat();
     }
     public void Dodge(Vector2 direction){if(stamina<24||Dodging)return;stamina-=24;dodgeDirection=direction.normalized;dodgeUntil=Time.time+.19f;invulnerableUntil=dodgeUntil+.08f;CombatFX.Burst(transform.position,new Color(.4f,.85f,1),6);CombatFX.Sound(2);}
     public void EquipItem(ItemId i){int type=ItemCatalog.WeaponType(i);if(type<0||!director.Has(i,1))return;weapon=(WeaponKind)type;if(type==0)swordSlot=i;else if(type==1)bowSlot=i;else staffSlot=i;director.Tell(WeaponName+" readied.");}
-    public void Attack()
+    public void BufferAttack(){attackBufferedUntil=Time.time+InputBufferSeconds;}
+    public void BufferSpecial(){specialBufferedUntil=Time.time+InputBufferSeconds;}
+    void ConsumeBufferedActions()
+    {
+        if(specialBufferedUntil>=Time.time&&Time.time>=skillUntil&&Time.time>=cooldown&&stamina>=35){specialBufferedUntil=-1;PerformSpecial();return;}
+        if(attackBufferedUntil>=Time.time&&Time.time>=cooldown){attackBufferedUntil=-1;PerformAttack();}
+    }
+    public void Attack(){BufferAttack();if(!Dodging&&!CombatHitStop.Active)ConsumeBufferedActions();}
+    void PerformAttack()
     {
         if(Time.time<cooldown||AshfallBeta.Paused)return;
         Vector2 aim=Aim;
@@ -65,9 +80,10 @@ public class PlayerHero : MonoBehaviour
             StartCoroutine(ReleaseShot(aim,weapon));
         }
     }
-    IEnumerator MeleeContact(Vector2 aim,bool finisher,bool reverse){yield return new WaitForSeconds(finisher?.16f:.12f);if(Dodging||weapon!=WeaponKind.Sword)yield break;attackStep=aim*(finisher?3.0f:1.65f);attackStepUntil=Time.time+.10f;CombatFX.Slash(transform.position+Vector3.up*.45f,aim,finisher?2.1f:1.65f,reverse,finisher);HitArc(aim,finisher?2.4f:1.95f,finisher?1.8f:1,finisher?7:3.7f,false);CombatFX.Sound(finisher?1:0);}
-    IEnumerator ReleaseShot(Vector2 aim,WeaponKind kind){yield return new WaitForSeconds(.13f);if(Dodging||weapon!=kind)yield break;Fire(aim,kind==WeaponKind.Staff,1);CombatFX.Sound(kind==WeaponKind.Bow?3:4);}
-    public void Special()
+    IEnumerator MeleeContact(Vector2 aim,bool finisher,bool reverse){yield return new WaitForSeconds(finisher?.16f:.12f);yield return new WaitWhile(()=>CombatHitStop.Active);if(Dodging||weapon!=WeaponKind.Sword)yield break;attackStep=aim*(finisher?3.0f:1.65f);attackStepUntil=Time.time+.10f;CombatFX.Slash(transform.position+Vector3.up*.45f,aim,finisher?2.1f:1.65f,reverse,finisher);HitArc(aim,finisher?2.4f:1.95f,finisher?1.8f:1,finisher?7:3.7f,false,finisher);if(finisher&&WeaponMastery.Has(this,WeaponMasteryTrait.SwordShockwave)){CombatFX.Slash(transform.position+Vector3.up*.35f,aim,WeaponMastery.SwordShockwaveRange(this),reverse,true);HitArc(aim,WeaponMastery.SwordShockwaveRange(this),WeaponMastery.SwordShockwaveDamage(this)/(float)Mathf.Max(1,Damage),5,false,true);}CombatFX.Sound(finisher?1:0);}
+    IEnumerator ReleaseShot(Vector2 aim,WeaponKind kind){yield return new WaitForSeconds(.13f);yield return new WaitWhile(()=>CombatHitStop.Active);if(Dodging||weapon!=kind)yield break;Fire(aim,kind==WeaponKind.Staff,1);CombatFX.Sound(kind==WeaponKind.Bow?3:4);}
+    public void Special(){BufferSpecial();if(!Dodging&&!CombatHitStop.Active)ConsumeBufferedActions();}
+    void PerformSpecial()
     {
         if(Time.time<skillUntil||stamina<35||AshfallBeta.Paused)return;
         stamina-=35;skillUntil=Time.time+2.4f;cooldown=Time.time+.32f;
@@ -75,60 +91,67 @@ public class PlayerHero : MonoBehaviour
         var rigAnim=GetComponent<BetaActor>();if(rigAnim)rigAnim.Swing(aim,false,true,weapon==WeaponKind.Sword);
         if(weapon==WeaponKind.Sword){
             CombatFX.Slash(transform.position+Vector3.up*.3f,aim,2.8f,false,true,true);
-            HitArc(aim,3.05f,2.25f,9,true);
+            HitArc(aim,3.05f,2.25f,9,true,true);
             director.Tell("WHIRLWIND!");
         }else if(weapon==WeaponKind.Bow){
-            for(int i=-2;i<=2;i++)Fire(Quaternion.Euler(0,0,i*12)*aim,false,1.2f);
+            for(int i=-2;i<=2;i++)Fire(Quaternion.Euler(0,0,i*12)*aim,false,1.2f,true);
             director.Tell("FAN SHOT!");
         }else{
             CombatFX.Ring(transform.position,3.2f,new Color(1,.42f,.15f));
-            HitArc(aim,3.4f,2.4f,8,true);
-            for(int i=0;i<8;i++)Fire(new Vector2(Mathf.Cos(i*Mathf.PI/4),Mathf.Sin(i*Mathf.PI/4)),true,.7f);
+            HitArc(aim,3.4f,2.4f,8,true,true);
+            for(int i=0;i<8;i++)Fire(new Vector2(Mathf.Cos(i*Mathf.PI/4),Mathf.Sin(i*Mathf.PI/4)),true,.7f,true);
             director.Tell("EMBER NOVA!");
         }
         CombatFX.Kick(.1f);CombatFX.Sound(1);
     }
-    void Fire(Vector2 direction,bool magic,float multiplier){
+    void Fire(Vector2 direction,bool magic,float multiplier,bool heavyImpact=false){
         var rig=GetComponent<HeroRig>();Vector2 origin=(rig?rig.GripPosition:transform.position+Vector3.up*.45f)+(Vector3)direction*(magic?.65f:.28f);if(!CombatRules.Clear(director,transform.position,origin-Vector2.up*.3f))return;var g=new GameObject(magic?"Ember":"Arrow");g.transform.position=origin;
-        var p=g.AddComponent<HeroProjectile>();p.director=director;p.direction=direction;p.magic=magic;p.sourceItem=ItemCatalog.Equipped(this);p.damage=Mathf.CeilToInt(Damage*multiplier*(magic&&HasRing(ItemId.RingFlames)?1.15f:1));
+        var p=g.AddComponent<HeroProjectile>();p.director=director;p.direction=direction;p.magic=magic;p.heavyImpact=heavyImpact;p.sourceItem=ItemCatalog.Equipped(this);p.damage=Mathf.CeilToInt(Damage*multiplier*(magic&&HasRing(ItemId.RingFlames)?1.15f:1));p.piercesRemaining=magic?0:WeaponMastery.BowExtraPierces(this);p.pierceDamageMultiplier=WeaponMastery.BowDamageAfterPierce(this);p.splitOnImpact=magic&&!heavyImpact&&WeaponMastery.StaffSplitCount(this)>0;p.splitCount=WeaponMastery.StaffSplitCount(this);p.splitAngle=WeaponMastery.StaffSplitAngle(this);p.splitDamageMultiplier=WeaponMastery.StaffSplitDamage(this);p.explosionScale=WeaponMastery.StaffExplosionScale(this);
     }
     public bool HasRing(ItemId x){return ringA==x||ringB==x;}
     public int ModifiedDamage(EnemyActor e,int value,ItemId? source=null){ItemId used=source??ItemCatalog.Equipped(this);if((e.kind==EnemyKind.Wolf||e.kind==EnemyKind.ForestBeast)&&HasRing(ItemId.RingHunter))value=Mathf.CeilToInt(value*1.1f);if(used==ItemId.HollowBlade&&(e.kind==EnemyKind.Skeleton||e.kind==EnemyKind.HollowKnight))value=Mathf.CeilToInt(value*1.4f);if(used==ItemId.FangSword&&UnityEngine.Random.value<.15f)value*=2;if(used==ItemId.EmberSword)e.burnUntil=Time.time+3;if(used==ItemId.FrostBow)e.chillUntil=Time.time+2;if(used==ItemId.VenomSaber||used==ItemId.ThornBow)e.poisonUntil=Time.time+4;if(used==ItemId.ThunderAxe||used==ItemId.StormBow)e.shockUntil=Time.time+.3f;if(used==ItemId.SunsteelBlade&&(e.kind==EnemyKind.Skeleton||e.kind==EnemyKind.IceWraith||e.kind==EnemyKind.DarkKnight||e.kind==EnemyKind.HollowKnight))value=Mathf.CeilToInt(value*1.5f);return value;}
-    void HitArc(Vector2 aim,float range,float multiplier,float force,bool radial){
+    static bool Elemental(ItemId item){return item==ItemId.EmberSword||item==ItemId.FrostBow||item==ItemId.CrystalStaff||item==ItemId.VenomSaber||item==ItemId.ThunderAxe||item==ItemId.SunsteelBlade||item==ItemId.ThornBow||item==ItemId.StormBow||item==ItemId.DuskStaff;}
+    void HitArc(Vector2 aim,float range,float multiplier,float force,bool radial,bool heavy=false){
+        int contacts=0;ItemId source=ItemCatalog.Equipped(this);
         for(int i=director.enemies.Count-1;i>=0;i--){
             var e=director.enemies[i];if(!e)continue;Vector2 delta=e.transform.position-transform.position;
             if(delta.magnitude>range||(!radial&&delta.sqrMagnitude>.2f&&Vector2.Dot(delta.normalized,aim)<-.1f))continue;
             if(!CombatRules.Clear(director,transform.position,e.transform.position))continue;
-            e.Impact(delta.normalized*force);
-            e.TakeDamage(ModifiedDamage(e,Mathf.CeilToInt(Damage*multiplier)),ItemCatalog.Equipped(this));
+            bool lightning=source==ItemId.ThunderAxe||source==ItemId.StormBow;e.ApplyImpact(delta.normalized*force,heavy?e.MaxPoise:Elemental(source)?28:14,heavy||lightning);
+            e.TakeDamage(ModifiedDamage(e,Mathf.CeilToInt(Damage*multiplier)),source);contacts++;
         }
+        if(heavy&&contacts>0)CombatHitStop.Trigger(.055f);
     }
+    public void ApplyPoison(float duration,float tickDamage){bool fresh=Time.time>=poisonUntil;poisonUntil=Mathf.Max(poisonUntil,Time.time+duration);poisonDamage=fresh?tickDamage:Mathf.Max(poisonDamage,tickDamage);nextPoisonTick=Mathf.Min(nextPoisonTick<=0?Time.time+.35f:nextPoisonTick,Time.time+.35f);if(fresh){director.Tell("POISONED - keep moving!");CombatFX.Ring(transform.position,.8f,new Color(.3f,1,.25f),.35f);}}
+    void RecoverFromDefeat(){int lost=director.DropDeathSatchel(transform.position);hp=MaxHp;poisonUntil=0;director.SpawnZone("Ruined Village");transform.position=Vector3.zero;director.Tell(lost>0?"Back at the fire. Recover your "+lost+" lost gold from the ember satchel.":"Back at the fire. Try dodging through attacks!");}
     public void Hurt(float damage){if(Time.time<invulnerableUntil)return;director.combatUntil=Time.time+6;hp-=damage*(HasRing(ItemId.RingGuard)?.85f:1)*(armorSlot==ItemId.IronArmor?.85f:armorSlot==ItemId.BoneArmor?.92f:1);invulnerableUntil=Time.time+.5f;var a=GetComponent<BetaActor>();if(a)a.Flash();CombatFX.Burst(transform.position+Vector3.up*.4f,new Color(1,.25f,.4f),8);CombatFX.Kick(.07f);CombatFX.Sound(5);}
     public void Lifesteal(float damage){if(HasRing(ItemId.RingVampire))hp=Mathf.Min(MaxHp,hp+damage*.03f);}
 }
 
 public class HeroProjectile : MonoBehaviour
 {
-    public AshfallDirector director;public Vector2 direction;public int damage;public bool magic;public ItemId sourceItem;
-    float life=1.3f,trailAt;
+    public AshfallDirector director;public Vector2 direction;public int damage,piercesRemaining,splitCount;public bool magic,heavyImpact,splitOnImpact;public ItemId sourceItem;public float pierceDamageMultiplier,splitAngle,splitDamageMultiplier,explosionScale=1;
+    float life=1.3f,trailAt;readonly HashSet<int> hitTargets=new HashSet<int>();
     void Start(){var r=gameObject.AddComponent<SpriteRenderer>();r.sprite=magic?CombatFX.Orb:CombatFX.Arrow;r.sortingOrder=1800;transform.localScale=Vector3.one*(magic?.4f:.65f);transform.rotation=Quaternion.Euler(0,0,Mathf.Atan2(direction.y,direction.x)*Mathf.Rad2Deg);}
     void Update(){
-        if(AshfallBeta.Paused)return;
+        if(AshfallBeta.Paused||CombatHitStop.Active)return;
         Vector2 before=transform.position;transform.position+=(Vector3)direction*(magic?12:17)*Time.deltaTime;
         Vector2 clipped;bool clear=CombatRules.Trace(director,before-Vector2.up*.3f,(Vector2)transform.position-Vector2.up*.3f,out clipped);transform.position=clipped+Vector2.up*.3f;
         life-=Time.deltaTime;if(life<0){Destroy(gameObject);return;}
         if(magic&&Time.time>trailAt){trailAt=Time.time+.035f;CombatFX.Spark(transform.position,-direction*1.5f,new Color(1,.4f,.15f),.18f,.14f);}
         Vector2 segment=(Vector2)transform.position-before;
         for(int i=director.enemies.Count-1;i>=0;i--){
-            var e=director.enemies[i];if(!e)continue;Vector2 target=(Vector2)e.transform.position+Vector2.up*.3f;
+            var e=director.enemies[i];if(!e||hitTargets.Contains(e.GetInstanceID()))continue;Vector2 target=(Vector2)e.transform.position+Vector2.up*.3f;
             float t=Mathf.Clamp01(Vector2.Dot(target-before,segment)/Mathf.Max(.00001f,segment.sqrMagnitude));
             if(Vector2.Distance(before+segment*t,target)>.55f)continue;
-            e.Impact(direction*(magic?3:4));e.TakeDamage(director.player.ModifiedDamage(e,damage,sourceItem),sourceItem);
-            if(magic){CombatFX.Ring(transform.position,1.15f,new Color(1,.55f,.15f));for(int j=director.enemies.Count-1;j>=0;j--){var other=director.enemies[j];if(other&&other!=e&&Vector2.Distance(other.transform.position,transform.position)<1.3f&&CombatRules.Clear(director,(Vector2)transform.position-Vector2.up*.3f,other.transform.position))other.TakeDamage(Mathf.CeilToInt(damage*.45f));}}
-            Destroy(gameObject);return;
+            float poise=heavyImpact?e.MaxPoise:PlayerHeroElemental(sourceItem)?30:(magic?20:14);bool lightning=sourceItem==ItemId.ThunderAxe||sourceItem==ItemId.StormBow;e.ApplyImpact(direction*(magic?3:4),poise,heavyImpact||lightning);e.TakeDamage(director.player.ModifiedDamage(e,damage,sourceItem),sourceItem);if(heavyImpact)CombatHitStop.Trigger(.045f);
+            if(magic){float radius=1.15f*explosionScale;CombatFX.Ring(transform.position,radius,new Color(1,.55f,.15f));for(int j=director.enemies.Count-1;j>=0;j--){var other=director.enemies[j];if(other&&other!=e&&Vector2.Distance(other.transform.position,transform.position)<radius+.15f&&CombatRules.Clear(director,(Vector2)transform.position-Vector2.up*.3f,other.transform.position))other.TakeDamage(Mathf.CeilToInt(damage*.45f));}if(splitOnImpact)SpawnSplits(e.GetInstanceID());}
+            if(!magic&&piercesRemaining>0){hitTargets.Add(e.GetInstanceID());piercesRemaining--;damage=Mathf.Max(1,Mathf.CeilToInt(damage*Mathf.Clamp01(pierceDamageMultiplier)));transform.position+=(Vector3)direction*.35f;continue;}Destroy(gameObject);return;
         }
         if(!clear){CombatFX.Burst(transform.position,new Color(.6f,.7f,.8f),3);Destroy(gameObject);}
     }
+    void SpawnSplits(int ignoredTarget){if(splitCount<=0||splitDamageMultiplier<=0)return;for(int i=0;i<splitCount;i++){float side=i%2==0?-1:1,magnitude=(i/2+1)*splitAngle;Vector2 splitDirection=Quaternion.Euler(0,0,side*magnitude)*direction;var g=new GameObject("Prismatic split");g.transform.position=transform.position+(Vector3)splitDirection*.55f;var p=g.AddComponent<HeroProjectile>();p.director=director;p.direction=splitDirection;p.magic=true;p.sourceItem=sourceItem;p.damage=Mathf.Max(1,Mathf.CeilToInt(damage*splitDamageMultiplier));p.explosionScale=1;p.hitTargets.Add(ignoredTarget);}}
+    static bool PlayerHeroElemental(ItemId item){return item==ItemId.EmberSword||item==ItemId.FrostBow||item==ItemId.CrystalStaff||item==ItemId.VenomSaber||item==ItemId.ThunderAxe||item==ItemId.SunsteelBlade||item==ItemId.ThornBow||item==ItemId.StormBow||item==ItemId.DuskStaff;}
 }
 
 public enum EnemyAttackStage { None, Windup, Strike, Recovery }
@@ -138,15 +161,17 @@ public class EnemyActor : MonoBehaviour
     public AshfallDirector director;public EnemyKind kind;public float hp,maxHp,speed,damage;
     public EliteModifier modifier;public bool objectiveTarget;
     public float burnUntil,chillUntil,poisonUntil,shockUntil;float nextBurn,nextPoison,nextRanged,nextSlam;
-    float nextAttack,nextDash,nextGround,nextEliteCue,stunUntil,windup,dashUntil,stageUntil;bool phaseTwo,preparing,dashHit;Vector2 knock,dash;int attackToken;
+    float nextAttack,nextDash,nextGround,nextEliteCue,stunUntil,windup,dashUntil,stageUntil,poiseRecoverAt;bool phaseTwo,preparing,dashHit,poiseBroken;Vector2 knock,dash;int attackToken;
     public EnemyAttackStage AttackStage {get;private set;}public Vector2 AttackDirection {get;private set;}public bool PhaseTwo {get{return phaseTwo;}}
+    public float Poise {get;private set;}public float MaxPoise {get;private set;}public float PoiseFraction {get{return MaxPoise<=0?0:Mathf.Clamp01(Poise/MaxPoise);}}public bool Staggered {get{return Time.time<stunUntil;}}public bool PoiseBroken {get{return poiseBroken;}}
     public void Setup(bool elite){Setup(elite&&kind!=EnemyKind.HollowKnight?EliteRules.ForZone(WorldAtlas.Index(director.zone)):EliteModifier.None);}
-    public void Setup(EliteModifier elite){switch(kind){case EnemyKind.Slime:maxHp=24;speed=1.5f;damage=6;break;case EnemyKind.Wolf:maxHp=38;speed=2.8f;damage=9;break;case EnemyKind.Skeleton:maxHp=48;speed=1.7f;damage=11;break;case EnemyKind.Goblin:maxHp=34;speed=2.2f;damage=8;break;case EnemyKind.ForestBeast:maxHp=110;speed=1.3f;damage=17;break;default:maxHp=300;speed=2.3f;damage=18;break;}ExpansionContent.Setup(this);modifier=kind==EnemyKind.HollowKnight?EliteModifier.None:elite;if(modifier==EliteModifier.Swift){maxHp*=1.15f;speed*=1.35f;}else if(modifier==EliteModifier.Armored)maxHp*=1.45f;else if(modifier==EliteModifier.Volatile){maxHp*=1.2f;damage*=1.1f;}else if(modifier==EliteModifier.Vampiric)maxHp*=1.25f;else if(modifier==EliteModifier.Warden){maxHp*=1.5f;damage*=1.1f;}hp=maxHp;nextDash=Time.time+2;nextEliteCue=Time.time+1;if(modifier!=EliteModifier.None)gameObject.AddComponent<EliteBadge>().Initialize(this);}
+    public void Setup(EliteModifier elite){switch(kind){case EnemyKind.Slime:maxHp=24;speed=1.5f;damage=6;break;case EnemyKind.Wolf:maxHp=38;speed=2.8f;damage=9;break;case EnemyKind.Skeleton:maxHp=48;speed=1.7f;damage=11;break;case EnemyKind.Goblin:maxHp=34;speed=2.2f;damage=8;break;case EnemyKind.ForestBeast:maxHp=110;speed=1.3f;damage=17;break;default:maxHp=300;speed=2.3f;damage=18;break;}ExpansionContent.Setup(this);modifier=kind==EnemyKind.HollowKnight?EliteModifier.None:elite;if(modifier==EliteModifier.Swift){maxHp*=1.15f;speed*=1.35f;}else if(modifier==EliteModifier.Armored)maxHp*=1.45f;else if(modifier==EliteModifier.Volatile){maxHp*=1.2f;damage*=1.1f;}else if(modifier==EliteModifier.Vampiric)maxHp*=1.25f;else if(modifier==EliteModifier.Warden){maxHp*=1.5f;damage*=1.1f;}MaxPoise=kind==EnemyKind.HollowKnight?150:kind==EnemyKind.ForestBeast||kind==EnemyKind.StoneGolem||kind==EnemyKind.DarkKnight?75:42;if(modifier==EliteModifier.Armored||modifier==EliteModifier.Warden)MaxPoise*=1.35f;if(modifier==EliteModifier.Swift)MaxPoise*=.85f;Poise=MaxPoise;hp=maxHp;nextDash=Time.time+2;nextRanged=Time.time+1.3f;nextEliteCue=Time.time+1;if(modifier!=EliteModifier.None)gameObject.AddComponent<EliteBadge>().Initialize(this);}
     void Cue(EnemyAttackStage stage,float duration,Vector2 direction){AttackStage=stage;stageUntil=Time.time+duration;if(direction.sqrMagnitude>.01f)AttackDirection=direction.normalized;}
     public void RestorePhase(bool value){phaseTwo=value&&kind==EnemyKind.HollowKnight;if(phaseTwo){speed=Mathf.Max(speed,3.1f);damage=Mathf.Max(damage,24);nextGround=Time.time+1.2f;}}
     void Update(){
-        if(AshfallBeta.Paused||!director||!director.player)return;
+        if(AshfallBeta.Paused||CombatHitStop.Active||!director||!director.player)return;
         if(AttackStage==EnemyAttackStage.Recovery&&Time.time>=stageUntil)AttackStage=EnemyAttackStage.None;
+        if(poiseBroken&&Time.time>=poiseRecoverAt){poiseBroken=false;Poise=MaxPoise;}else if(!poiseBroken&&Time.time>=poiseRecoverAt&&Poise<MaxPoise)Poise=Mathf.Min(MaxPoise,Poise+18*Time.deltaTime);
         if(Time.time<burnUntil&&Time.time>=nextBurn){nextBurn=Time.time+.6f;TakeDamage(2);if(hp<=0)return;CombatFX.Spark(transform.position,Vector2.up,new Color(1,.4f,.2f));}
         Vector2 prior=transform.position;
         if(Time.time<poisonUntil&&Time.time>=nextPoison){nextPoison=Time.time+.6f;TakeDamage(3);if(hp<=0)return;CombatFX.Spark(transform.position,Vector2.up,Color.green);}
@@ -167,15 +192,19 @@ public class EnemyActor : MonoBehaviour
         if((kind==EnemyKind.Wolf||kind==EnemyKind.HollowKnight||kind==EnemyKind.CaveBat||kind==EnemyKind.Scorpion||kind==EnemyKind.DarkKnight)&&Time.time>nextDash&&dist>2&&dist<7&&!preparing&&AttackStage==EnemyAttackStage.None){preparing=true;windup=Time.time+.45f;dash=toward;nextDash=Time.time+3.2f;Cue(EnemyAttackStage.Windup,.45f,dash);CombatFX.Telegraph(transform.position,(Vector2)transform.position+dash*3.8f,.45f);}
         if(preparing&&Time.time>windup){preparing=false;dashHit=false;dashUntil=Time.time+.3f;Cue(EnemyAttackStage.Strike,.3f,dash);}
         if(kind==EnemyKind.HollowKnight&&phaseTwo&&Time.time>nextGround&&AttackStage==EnemyAttackStage.None){nextGround=Time.time+2.8f;StartCoroutine(Slam());}
-        if((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None){nextRanged=Time.time+2.2f;StartCoroutine(Cast(toward));}
+        if(kind==EnemyKind.Scorpion&&dist>3&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None&&!preparing){nextRanged=Time.time+3.6f;StartCoroutine(Volley(toward,true));}
+        if((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None){nextRanged=Time.time+(kind==EnemyKind.IceWraith?3.1f:2.2f);if(kind==EnemyKind.IceWraith)StartCoroutine(Volley(toward,false));else StartCoroutine(Cast(toward));}
         if((kind==EnemyKind.StoneGolem||kind==EnemyKind.DarkKnight)&&dist<3.5f&&Time.time>nextSlam&&AttackStage==EnemyAttackStage.None){nextSlam=Time.time+4;StartCoroutine(Slam());}
         int area=WorldAtlas.Index(director.zone);Vector2 home=WorldAtlas.Centers[area];transform.position=WorldAtlas.Constrain(area,prior-home,(Vector2)transform.position-home)+home;
         if(dist<1&&Time.time>nextAttack&&AttackStage==EnemyAttackStage.None&&!preparing&&dashUntil<=0){nextAttack=Time.time+(kind==EnemyKind.Wolf?.9f:1.25f);StartCoroutine(MeleeStrike(toward));}
     }
-    System.Collections.IEnumerator MeleeStrike(Vector2 aim){int token=++attackToken;Cue(EnemyAttackStage.Windup,.24f,aim);CombatFX.Ring(transform.position,.75f,new Color(1,.35f,.2f),.24f);yield return new WaitForSeconds(.24f);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.11f,aim);if(Vector2.Distance(transform.position,director.player.transform.position)<1.25f&&CombatRules.Clear(director,transform.position,director.player.transform.position))HitPlayer(damage);yield return new WaitForSeconds(.11f);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.3f,aim);}
-    System.Collections.IEnumerator Cast(Vector2 aim){int token=++attackToken;Cue(EnemyAttackStage.Windup,.45f,aim);CombatFX.Ring(transform.position,.9f,Color.cyan,.45f);yield return new WaitForSeconds(.45f);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.12f,aim);var g=new GameObject("Enemy spell");g.transform.position=transform.position+Vector3.up*.3f;var b=g.AddComponent<EnemyBolt>();b.director=director;b.owner=this;b.velocity=aim*5.5f;b.damage=damage;b.color=kind==EnemyKind.IceWraith?Color.cyan:new Color(.5f,1,.2f);yield return new WaitForSeconds(.12f);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.32f,aim);}
-    System.Collections.IEnumerator Slam(){int token=++attackToken;Vector2 aim=(director.player.transform.position-transform.position).normalized;Cue(EnemyAttackStage.Windup,.5f,aim);CombatFX.Ring(transform.position,3.1f,new Color(1,.2f,.55f),.5f);yield return new WaitForSeconds(.5f);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.14f,aim);CreateGroundPulse();yield return new WaitForSeconds(.14f);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.4f,aim);}
-    public void Impact(Vector2 force){knock=force*(kind==EnemyKind.HollowKnight?.35f:1);stunUntil=Time.time+.13f;preparing=false;dashUntil=0;attackToken++;AttackStage=EnemyAttackStage.None;var a=GetComponent<BetaActor>();if(a)a.Flash();}
+    System.Collections.IEnumerator MeleeStrike(Vector2 aim){int token=++attackToken;Cue(EnemyAttackStage.Windup,.24f,aim);CombatFX.Ring(transform.position,.75f,new Color(1,.35f,.2f),.24f);yield return new WaitForSeconds(.24f);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.11f,aim);if(Vector2.Distance(transform.position,director.player.transform.position)<1.25f&&CombatRules.Clear(director,transform.position,director.player.transform.position))HitPlayer(damage);yield return new WaitForSeconds(.11f);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.3f,aim);}
+    System.Collections.IEnumerator Cast(Vector2 aim){int token=++attackToken;Cue(EnemyAttackStage.Windup,.45f,aim);CombatFX.Ring(transform.position,.9f,Color.cyan,.45f);yield return new WaitForSeconds(.45f);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.12f,aim);var g=new GameObject("Enemy spell");g.transform.position=transform.position+Vector3.up*.3f;var b=g.AddComponent<EnemyBolt>();b.director=director;b.owner=this;b.velocity=aim*5.5f;b.damage=damage;b.color=kind==EnemyKind.IceWraith?Color.cyan:new Color(.5f,1,.2f);yield return new WaitForSeconds(.12f);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.32f,aim);}
+    System.Collections.IEnumerator Volley(Vector2 aim,bool poison){int token=++attackToken;int count=poison?3:5;float spread=poison?15:12,warning=poison?.55f:.62f;Color color=poison?new Color(.35f,1,.25f):new Color(.35f,.9f,1);Cue(EnemyAttackStage.Windup,warning,aim);EnemyVolleyWarning.Show(director,transform.position,aim,count,spread,color,warning);CombatFX.Ring(transform.position,1.05f,color,warning);yield return new WaitForSeconds(warning);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.16f,aim);for(int i=0;i<count;i++){float angle=(i-(count-1)*.5f)*spread;Vector2 direction=Quaternion.Euler(0,0,angle)*aim;EnemyVolleyProjectile.Launch(director,this,transform.position+Vector3.up*.3f,direction,poison?6.2f:7.2f,poison?damage*.72f:damage*.62f,color,poison);}yield return new WaitForSeconds(.16f);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,poison?.48f:.55f,aim);}
+    System.Collections.IEnumerator Slam(){int token=++attackToken;Vector2 aim=(director.player.transform.position-transform.position).normalized;Cue(EnemyAttackStage.Windup,.5f,aim);CombatFX.Ring(transform.position,3.1f,new Color(1,.2f,.55f),.5f);yield return new WaitForSeconds(.5f);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp<=0||token!=attackToken)yield break;Cue(EnemyAttackStage.Strike,.14f,aim);CreateGroundPulse();yield return new WaitForSeconds(.14f);yield return new WaitWhile(()=>CombatHitStop.Active);if(hp>0&&token==attackToken)Cue(EnemyAttackStage.Recovery,.4f,aim);}
+    // Normal hits chip poise without erasing a telegraph. Finishers, specials, and elemental pressure break it.
+    public bool ApplyImpact(Vector2 force,float poiseDamage,bool forceStagger=false){if(hp<=0)return false;var a=GetComponent<BetaActor>();if(a)a.Flash();if(poiseBroken){knock+=force*(kind==EnemyKind.HollowKnight?.04f:.12f);return false;}Poise=Mathf.Max(0,Poise-Mathf.Max(0,poiseDamage));poiseRecoverAt=Time.time+1.1f;if(!forceStagger&&Poise>0){knock+=force*(kind==EnemyKind.HollowKnight?.06f:.18f);return false;}Poise=0;poiseBroken=true;poiseRecoverAt=Time.time+.65f;knock=force*(kind==EnemyKind.HollowKnight?.25f:.75f);stunUntil=Time.time+.22f;preparing=false;dashUntil=0;attackToken++;Cue(EnemyAttackStage.Recovery,.42f,force);CombatFX.Ring(transform.position,.72f,new Color(.55f,.9f,1),.24f);return true;}
+    public void Impact(Vector2 force){ApplyImpact(force,14,false);}
     void CreateGroundPulse(){var g=new GameObject("Gravefall");g.transform.position=transform.position;var p=g.AddComponent<GroundPulse>();p.director=director;p.damage=20;CombatFX.Ring(transform.position,3.1f,new Color(.9f,.25f,1),.75f);director.Tell("GRAVEFALL! Dodge out of the circle.");}
     public void HitPlayer(float amount){float before=director.player.hp;director.player.Hurt(amount);float dealt=Mathf.Max(0,before-director.player.hp);if(modifier==EliteModifier.Vampiric&&dealt>0){hp=Mathf.Min(maxHp,hp+dealt*.65f);CombatFX.Spark(transform.position,Vector2.up,EliteRules.Color(modifier));}}
     public void TakeDamage(int d,ItemId? source=null){if(hp<=0||d<=0)return;if(modifier==EliteModifier.Armored)d=Mathf.Max(1,Mathf.CeilToInt(d*.68f));foreach(var ally in director.enemies)if(ally&&ally!=this&&ally.modifier==EliteModifier.Warden&&Vector2.Distance(ally.transform.position,transform.position)<3.8f){d=Mathf.Max(1,Mathf.CeilToInt(d*.8f));break;}float dealt=Mathf.Min(hp,d);hp-=dealt;director.combatUntil=Time.time+6;if(source==ItemId.DuskStaff)director.player.hp=Mathf.Min(director.player.MaxHp,director.player.hp+dealt*.05f);AshfallBeta.DamageNumber(transform.position,Mathf.CeilToInt(dealt));CombatFX.Burst(transform.position+Vector3.up*.4f,new Color(1,.85f,.35f),7);CombatFX.Kick(.025f);CombatFX.Sound(6);director.player.Lifesteal(dealt);if(hp<=0){CombatFX.Burst(transform.position,new Color(.6f,.45f,.85f),12);if(modifier==EliteModifier.Volatile){var g=new GameObject("Volatile warning");g.transform.position=transform.position;g.AddComponent<VolatileBurst>().director=director;}director.EnemyDied(this);}}
@@ -183,12 +212,12 @@ public class EnemyActor : MonoBehaviour
 public class GroundPulse : MonoBehaviour
 {
     public AshfallDirector director;public float damage;float age;
-    void Update(){if(AshfallBeta.Paused)return;age+=Time.deltaTime;if(age>.7f){CombatFX.Ring(transform.position,3.1f,new Color(1,.4f,.8f),.25f);if(Vector2.Distance(transform.position,director.player.transform.position)<3.1f&&CombatRules.Clear(director,transform.position,director.player.transform.position))director.player.Hurt(damage);Destroy(gameObject);}}
+    void Update(){if(AshfallBeta.Paused||CombatHitStop.Active)return;age+=Time.deltaTime;if(age>.7f){CombatFX.Ring(transform.position,3.1f,new Color(1,.4f,.8f),.25f);if(Vector2.Distance(transform.position,director.player.transform.position)<3.1f&&CombatRules.Clear(director,transform.position,director.player.transform.position))director.player.Hurt(damage);Destroy(gameObject);}}
 }
 public class LootPickup : MonoBehaviour
 {
     public AshfallDirector director;public ItemId item;public int amount;
-    void Update(){if(AshfallBeta.Paused)return;float dist=Vector2.Distance(transform.position,director.player.transform.position);if(dist<1.6f)transform.position=Vector3.MoveTowards(transform.position,director.player.transform.position,Time.deltaTime*8);if(dist<.45f){director.Add(item,amount);director.pickups.Remove(this);CombatFX.Sound(7);Destroy(gameObject);}}
+    void Update(){if(AshfallBeta.Paused||CombatHitStop.Active)return;float dist=Vector2.Distance(transform.position,director.player.transform.position);if(dist<1.6f)transform.position=Vector3.MoveTowards(transform.position,director.player.transform.position,Time.deltaTime*8);if(dist<.45f){director.Add(item,amount);director.pickups.Remove(this);CombatFX.Sound(7);Destroy(gameObject);}}
 }
 // Ashfall is intentionally self-contained: it creates its pixel-styled world and UI at runtime.
 // Drop this into a blank Unity 6 2D project, press Play, and no external art or packages are needed.
@@ -214,6 +243,8 @@ public enum EnemyKind { Slime, Wolf, Skeleton, Goblin, ForestBeast, HollowKnight
 
 public class AshfallDirector : MonoBehaviour
 {
+    public const float DeathGoldFraction=.2f;
+    public const int DeathGoldCap=100;
     public static AshfallDirector I;
     public Sprite pixel;
     public PlayerHero player;
@@ -293,6 +324,8 @@ public class AshfallDirector : MonoBehaviour
         pickups.Clear();
         zone=z;int area=WorldAtlas.Index(z);
         foreach(var bolt in FindObjectsByType<EnemyBolt>(FindObjectsSortMode.None))Destroy(bolt.gameObject);
+        foreach(var volley in FindObjectsByType<EnemyVolleyProjectile>(FindObjectsSortMode.None))Destroy(volley.gameObject);
+        foreach(var warning in FindObjectsByType<EnemyVolleyWarningLife>(FindObjectsSortMode.None))Destroy(warning.gameObject);
         foreach(var shot in FindObjectsByType<HeroProjectile>(FindObjectsSortMode.None))Destroy(shot.gameObject);
         foreach(var pulse in FindObjectsByType<GroundPulse>(FindObjectsSortMode.None))Destroy(pulse.gameObject);
         if(journal.Restore(this,area)){if(objectives&&area>0)objectives.Deploy(area,true);return;}
@@ -323,6 +356,8 @@ public class AshfallDirector : MonoBehaviour
     Color EnemyColor(EnemyKind e){ switch(e){case EnemyKind.Slime:return new Color(.3f,.9f,.5f);case EnemyKind.Wolf:return new Color(.55f,.45f,.35f);case EnemyKind.Skeleton:return new Color(.85f,.85f,.75f);case EnemyKind.Goblin:return new Color(.55f,.8f,.22f);case EnemyKind.ForestBeast:return new Color(.2f,.5f,.25f);default:return new Color(.72f,.35f,.9f);} }
     public void Add(ItemId item,int amount){ bag[item]+=amount; Tell("+"+amount+" "+ItemName(item)); }
     public bool Has(ItemId item,int n){return bag.ContainsKey(item)&&bag[item]>=n;}
+    // Death only risks a bounded slice of currency. The normal persisted-loot path makes it recoverable on return.
+    public int DropDeathSatchel(Vector2 position){int available=bag.ContainsKey(ItemId.Gold)?bag[ItemId.Gold]:0;int lost=Mathf.Min(DeathGoldCap,Mathf.FloorToInt(available*DeathGoldFraction));if(lost<=0)return 0;bag[ItemId.Gold]-=lost;RestoreLoot(position,ItemId.Gold,lost);var pickup=pickups.Count>0?pickups[pickups.Count-1]:null;if(pickup)pickup.gameObject.name="Recoverable ember satchel / "+lost+" gold";return lost;}
     public string ItemName(ItemId i){return ItemCatalog.Name(i);}
     public void CollectNearby(){ foreach(var p in new List<LootPickup>(pickups))if(p&&Vector2.Distance(player.transform.position,p.transform.position)<2){Add(p.item,p.amount);pickups.Remove(p);Destroy(p.gameObject);} }
     public void DrinkPotion(){if(!ItemCatalog.Use(player,ItemId.HealthPotion))Tell("No potion needed or none available.");}
@@ -330,7 +365,7 @@ public class AshfallDirector : MonoBehaviour
     public void Tell(string message){toast=message;toastUntil=Time.time+3.5f;}
     public void EnemyDied(EnemyActor e)
     {
-        enemies.Remove(e);kills++;if(kills>=6)zoneTier=Mathf.Max(zoneTier,1);if(kills>=12)zoneTier=Mathf.Max(zoneTier,2);if(kills>=18)zoneTier=Mathf.Max(zoneTier,3);if(objectives)objectives.NotifyEnemyDied(e);
+        enemies.Remove(e);kills++;BestiaryJournal.Ensure(this).RegisterKill(e.kind,e.modifier);if(kills>=6)zoneTier=Mathf.Max(zoneTier,1);if(kills>=12)zoneTier=Mathf.Max(zoneTier,2);if(kills>=18)zoneTier=Mathf.Max(zoneTier,3);if(objectives)objectives.NotifyEnemyDied(e);
         if(e.kind==EnemyKind.HollowKnight){bossState=2; Drop(e.transform.position,ItemId.HollowBlade,1);Drop(e.transform.position+Vector3.right,ItemId.RingVampire,1);Tell("VICTORY — Hollow Blade gained: +40% damage to undead.");}
         else {DropTable(e);if(e.modifier!=EliteModifier.None){Drop(e.transform.position,ItemId.Gold,20+5*(int)e.modifier);Drop(e.transform.position+Vector3.right*.35f,(int)e.modifier%2==0?ItemId.AncientShard:ItemId.EmberShard,1);}if(UnityEngine.Random.value<.18f)Drop((Vector2)e.transform.position+UnityEngine.Random.insideUnitCircle,ItemId.RedHerb,1);}
         Destroy(e.gameObject);

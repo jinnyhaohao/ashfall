@@ -10,6 +10,7 @@ public class ExpeditionObjectives : MonoBehaviour
     public bool[] started=new bool[8],completed=new bool[8],claimed=new bool[8];
     public int[] seals=new int[8]; // Version 3 compatibility view.
     readonly SpriteRenderer[,] markers=new SpriteRenderer[8,4];
+    readonly ObjectiveMarkerCue[,] markerCues=new ObjectiveMarkerCue[8,4];
     readonly float[] defenseClock=new float[8],defenseDamage=new float[8],defenseGraceUntil=new float[8];
     AshfallDirector d;
     public static readonly ObjectiveType[] Types={ObjectiveType.None,ObjectiveType.CorruptedAnchors,ObjectiveType.SurvivalWaves,ObjectiveType.DefendRelic,ObjectiveType.EliteHunt,ObjectiveType.CorruptedAnchors,ObjectiveType.SurvivalWaves,ObjectiveType.DefendRelic};
@@ -21,11 +22,11 @@ public class ExpeditionObjectives : MonoBehaviour
 
     public void Initialize(AshfallDirector director,Sprite[] art)
     {
-        d=director;var details=Resources.Load<Texture2D>("AshfallAtlasDetails");Sprite cache=ExpansionContent.Slice(details,8,4,4,new Vector2(.5f,.04f));
+        d=director;var details=Resources.Load<Texture2D>("AshfallAtlasDetails");Sprite cache=ExpansionContent.Slice(details,8,4,4,new Vector2(.5f,.04f)),brazier=ExpansionContent.Slice(details,10,4,4,new Vector2(.5f,.04f)),relic=ExpansionContent.Slice(details,7,4,4,new Vector2(.5f,.04f)),hunt=ExpansionContent.Slice(details,15,4,4,new Vector2(.5f,.04f));
         for(int z=1;z<8;z++)for(int i=0;i<4;i++){
             if(!UsesMarker(z,i))continue;
             string title=i==3?"Guarded reward cache":Type(z)==ObjectiveType.CorruptedAnchors?"Corrupted anchor":Type(z)==ObjectiveType.SurvivalWaves?"Challenge brazier":Type(z)==ObjectiveType.DefendRelic?"Expedition relic":"Hunt sigil";
-            var g=new GameObject(title);g.transform.position=Position(z,i);g.transform.localScale=Vector3.one*(i==3?.85f:.68f);var r=g.AddComponent<SpriteRenderer>();r.sprite=i==3?cache:art[11];r.sortingOrder=108-(int)(g.transform.position.y*10);markers[z,i]=r;
+            var g=new GameObject(title);g.transform.position=Position(z,i);g.transform.localScale=Vector3.one*(i==3?.85f:Type(z)==ObjectiveType.SurvivalWaves?.66f:Type(z)==ObjectiveType.DefendRelic?.74f:Type(z)==ObjectiveType.EliteHunt?.72f:.68f);var r=g.AddComponent<SpriteRenderer>();r.sprite=i==3?cache:Type(z)==ObjectiveType.SurvivalWaves?brazier:Type(z)==ObjectiveType.DefendRelic?relic:Type(z)==ObjectiveType.EliteHunt?hunt:art[11];r.sortingOrder=108-(int)(g.transform.position.y*10);markers[z,i]=r;var cue=g.AddComponent<ObjectiveMarkerCue>();cue.Initialize(this,z,i,Type(z),r.sortingOrder-1);markerCues[z,i]=cue;
         }
     }
 
@@ -92,6 +93,9 @@ public class ExpeditionObjectives : MonoBehaviour
     }
     void Update(){if(!d||AshfallBeta.Paused)return;TickDefense(Time.deltaTime);for(int z=1;z<8;z++)for(int i=0;i<4;i++)if(markers[z,i])markers[z,i].color=MarkerColor(z,i);}
 
+    public bool MarkerLocked(int z,int slot){return slot==3&&!completed[z]&&!claimed[z];}
+    public bool MarkerResolved(int z,int slot){if(slot==3)return claimed[z];if(Type(z)==ObjectiveType.CorruptedAnchors)return (progress[z]&(1<<slot))!=0;return completed[z];}
+
     Color MarkerColor(int z,int slot){if(slot==3)return claimed[z]?new Color(.35f,.35f,.35f):completed[z]?Color.white:new Color(.55f,.55f,.6f);if(Type(z)==ObjectiveType.CorruptedAnchors)return (progress[z]&(1<<slot))!=0?new Color(.3f,.9f,1):new Color(.72f,.3f,.92f);return completed[z]?new Color(.3f,.9f,1):ObjectiveColor(Type(z));}
     static Color ObjectiveColor(ObjectiveType t){return t==ObjectiveType.SurvivalWaves?new Color(1,.5f,.18f):t==ObjectiveType.DefendRelic?new Color(.2f,.9f,1):t==ObjectiveType.EliteHunt?new Color(1,.25f,.45f):new Color(.7f,.3f,1);}
     void Complete(int z){started[z]=false;completed[z]=true;CombatFX.Burst(Position(z,0),Color.cyan,18);d.Tell("OBJECTIVE COMPLETE — the guarded cache is unlocked.");Save();}
@@ -108,4 +112,18 @@ public class ExpeditionObjectives : MonoBehaviour
         if((savedProgress==null||savedProgress.Length==0)&&legacySeals!=null)for(int z=1;z<Mathf.Min(8,legacySeals.Length);z++){seals[z]=legacySeals[z]&7;if(Type(z)==ObjectiveType.CorruptedAnchors){progress[z]=seals[z];completed[z]=seals[z]==7;}else if(legacySeals[z]==7)completed[z]=true;}
         for(int z=1;z<8;z++){if(Type(z)==ObjectiveType.CorruptedAnchors)seals[z]=progress[z]&7;if(Type(z)==ObjectiveType.DefendRelic&&aux[z]<=0)aux[z]=100;if(claimed[z])completed[z]=true;}
     }
+}
+
+// Shape remains readable when colors are muted: triangle=anchor, rays=waves,
+// square=relic, diamond=hunt. Caches carry a separate pixel-lock until earned.
+public class ObjectiveMarkerCue : MonoBehaviour
+{
+    static readonly Sprite[] glyphs=new Sprite[5];static Sprite lockSprite;
+    ExpeditionObjectives owner;int zone,slot;ObjectiveType type;SpriteRenderer glyph,lockIcon;float phase;
+    public void Initialize(ExpeditionObjectives objectives,int z,int markerSlot,ObjectiveType objectiveType,int order){owner=objectives;zone=z;slot=markerSlot;type=objectiveType;var ground=new GameObject(markerSlot==3?"Cache ground seal":"Objective ground glyph");ground.transform.SetParent(transform,false);ground.transform.localPosition=new Vector3(0,.04f,0);glyph=ground.AddComponent<SpriteRenderer>();glyph.sprite=Glyph(markerSlot==3?ObjectiveType.None:objectiveType);glyph.sortingOrder=order;glyph.color=Tint();
+        if(markerSlot==3){var locked=new GameObject("Locked cache cue");locked.transform.SetParent(transform,false);locked.transform.localPosition=new Vector3(.48f,.72f,0);locked.transform.localScale=Vector3.one*.46f;lockIcon=locked.AddComponent<SpriteRenderer>();lockIcon.sprite=Lock();lockIcon.sortingOrder=order+3;lockIcon.color=GameSettings.CueColor(new Color(1,.72f,.2f));}}
+    static Sprite Glyph(ObjectiveType kind){int index=(int)kind;if(glyphs[index])return glyphs[index];const int w=32,h=16;var texture=new Texture2D(w,h,TextureFormat.RGBA32,false);texture.filterMode=FilterMode.Point;for(int y=0;y<h;y++)for(int x=0;x<w;x++){float nx=(x-15.5f)/15.5f,ny=(y-7.5f)/7.5f,d=Mathf.Sqrt(nx*nx+ny*ny);bool ring=d>.72f&&d<.95f,mark=false;if(kind==ObjectiveType.CorruptedAnchors)mark=y<10&&Mathf.Abs(x-16)<=y/2&&y>3;if(kind==ObjectiveType.SurvivalWaves)mark=(Mathf.Abs(x-16)<2&&y>3)||(Mathf.Abs(x-11)<2&&y>6)||(Mathf.Abs(x-21)<2&&y>6);if(kind==ObjectiveType.DefendRelic)mark=(x>11&&x<21&&(y==4||y==11))||(y>3&&y<12&&(x==11||x==20));if(kind==ObjectiveType.EliteHunt)mark=Mathf.Abs(x-16)+Mathf.Abs(y-8)>=5&&Mathf.Abs(x-16)+Mathf.Abs(y-8)<=7;if(kind==ObjectiveType.None)mark=Mathf.Abs(x-16)<2||Mathf.Abs(y-8)<1;texture.SetPixel(x,y,ring||mark?Color.white:Color.clear);}texture.Apply();glyphs[index]=Sprite.Create(texture,new Rect(0,0,w,h),Vector2.one*.5f,16);return glyphs[index];}
+    static Sprite Lock(){if(lockSprite)return lockSprite;const int s=12;var texture=new Texture2D(s,s,TextureFormat.RGBA32,false);texture.filterMode=FilterMode.Point;for(int y=0;y<s;y++)for(int x=0;x<s;x++){bool shackle=y>=6&&y<=10&&(x==3||x==8||y==10),body=y>=1&&y<=6&&x>=2&&x<=9,hole=(x==5||x==6)&&y>=2&&y<=4;texture.SetPixel(x,y,(shackle||body)&&!hole?Color.white:Color.clear);}texture.Apply();lockSprite=Sprite.Create(texture,new Rect(0,0,s,s),Vector2.one*.5f,12);return lockSprite;}
+    Color Tint(){if(slot==3)return owner&&owner.MarkerLocked(zone,slot)?new Color(.62f,.58f,.5f):new Color(1,.82f,.3f);return type==ObjectiveType.SurvivalWaves?new Color(1,.5f,.18f):type==ObjectiveType.DefendRelic?new Color(.2f,.9f,1):type==ObjectiveType.EliteHunt?new Color(1,.25f,.45f):new Color(.7f,.3f,1);}
+    void Update(){if(!owner||!glyph)return;phase+=Time.deltaTime;bool resolved=owner.MarkerResolved(zone,slot);float pulse=resolved?1:1+.09f*Mathf.Sin(phase*3.5f);glyph.transform.localScale=new Vector3(1.65f,1.25f,1)*pulse;Color color=resolved?new Color(.35f,.9f,1,.34f):GameSettings.CueColor(Tint());color.a=resolved?.34f:.72f+.14f*Mathf.Sin(phase*3.5f);glyph.color=color;if(lockIcon){lockIcon.enabled=owner.MarkerLocked(zone,slot);if(lockIcon.enabled)lockIcon.color=GameSettings.CueColor(new Color(1,.72f,.2f));}}
 }
