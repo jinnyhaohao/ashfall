@@ -71,7 +71,7 @@ public class PlayerHero : MonoBehaviour
         if(weapon==WeaponKind.Sword){
             if(Time.time-lastAttack>.8f)combo=0;
             combo=combo%3+1;lastAttack=Time.time;
-            bool finisher=combo==3;cooldown=Time.time+(finisher?.42f:.31f);
+            bool finisher=combo==3;cooldown=Time.time+(finisher?.42f:.31f)*WeaponMastery.AttackCooldownMultiplier(this);
             var anim=GetComponent<BetaActor>();if(anim)anim.Swing(aim,combo==2,finisher);
             StartCoroutine(MeleeContact(aim,finisher,combo==2));
         }else{
@@ -81,7 +81,7 @@ public class PlayerHero : MonoBehaviour
         }
     }
     IEnumerator MeleeContact(Vector2 aim,bool finisher,bool reverse){yield return new WaitForSeconds(finisher?.16f:.12f);yield return new WaitWhile(()=>CombatHitStop.Active);if(Dodging||weapon!=WeaponKind.Sword)yield break;attackStep=aim*(finisher?3.0f:1.65f);attackStepUntil=Time.time+.10f;CombatFX.Slash(transform.position+Vector3.up*.45f,aim,finisher?2.1f:1.65f,reverse,finisher);HitArc(aim,finisher?2.4f:1.95f,finisher?1.8f:1,finisher?7:3.7f,false,finisher);if(finisher&&WeaponMastery.Has(this,WeaponMasteryTrait.SwordShockwave)){CombatFX.Slash(transform.position+Vector3.up*.35f,aim,WeaponMastery.SwordShockwaveRange(this),reverse,true);HitArc(aim,WeaponMastery.SwordShockwaveRange(this),WeaponMastery.SwordShockwaveDamage(this)/(float)Mathf.Max(1,Damage),5,false,true);}CombatFX.Sound(finisher?1:0);}
-    IEnumerator ReleaseShot(Vector2 aim,WeaponKind kind){yield return new WaitForSeconds(.13f);yield return new WaitWhile(()=>CombatHitStop.Active);if(Dodging||weapon!=kind)yield break;Fire(aim,kind==WeaponKind.Staff,1);CombatFX.Sound(kind==WeaponKind.Bow?3:4);}
+    IEnumerator ReleaseShot(Vector2 aim,WeaponKind kind){yield return new WaitForSeconds(.13f);yield return new WaitWhile(()=>CombatHitStop.Active);if(Dodging||weapon!=kind)yield break;Fire(aim,kind==WeaponKind.Staff,1);float twin=kind==WeaponKind.Bow?WeaponMastery.BowTwinShotMultiplier(this):0;if(twin>0)Fire(Quaternion.Euler(0,0,8)*aim,false,twin);CombatFX.Sound(kind==WeaponKind.Bow?3:4);}
     public void Special(){BufferSpecial();if(!Dodging&&!CombatHitStop.Active)ConsumeBufferedActions();}
     void PerformSpecial()
     {
