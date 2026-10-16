@@ -10,7 +10,7 @@ public static class AshfallBuild
     const string ScenePath = "Assets/Scenes/Ashfall.unity";
 
     [MenuItem("Ashfall/Build Windows")]
-    public static void BuildWindows(){BuildTo("Builds/AdventurePolishCandidate");}
+    public static void BuildWindows(){BuildTo("Builds/ExpeditionChoiceCandidate");}
 
     [MenuItem("Ashfall/Build Manual Playtest")]
     public static void BuildManualPlaytest(){BuildTo("Builds/ManualPlaytest");}

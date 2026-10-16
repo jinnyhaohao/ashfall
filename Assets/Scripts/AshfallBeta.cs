@@ -13,8 +13,8 @@ public class AshfallBeta : MonoBehaviour
     public Sprite[] art=new Sprite[16];
     Texture2D atlas, vignette;
     RenderTexture canvas;
-    bool title=true, pause, map, codex, settings;
-    int tab, ringSlot, bestiarySelection;
+    bool title=true, pause, map, codex, settings, contractOpen, contractReturnToMap;
+    int tab, ringSlot, bestiarySelection, pendingTravel=-1;
     string lastZone="";
     Vector2 scroll,craftScroll;
     ItemId selectedItem=ItemId.HealthPotion;
@@ -34,8 +34,9 @@ public class AshfallBeta : MonoBehaviour
     bool BetaTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-betaTest")>=0;}}
     bool SprintTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-sprintTest")>=0;}}
     bool AdventureTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-adventureTest")>=0;}}
+    bool ContractTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-contractTest")>=0;}}
     bool ManualTesting {get{return Array.IndexOf(Environment.GetCommandLineArgs(),"-manualTest")>=0||Application.dataPath.IndexOf("ManualPlaytest",StringComparison.OrdinalIgnoreCase)>=0;}}
-    bool Testing {get{return ManualTesting||CaptureTesting||DetailTesting||WorldTesting||WeaponTesting||RigTesting||ItemTesting||BetaTesting||SprintTesting||AdventureTesting;}}
+    bool Testing {get{return ManualTesting||CaptureTesting||DetailTesting||WorldTesting||WeaponTesting||RigTesting||ItemTesting||BetaTesting||SprintTesting||AdventureTesting||ContractTesting;}}
     string SavePath { get {return Path.Combine(Application.persistentDataPath,Testing?"ashfall-qa.json":"ashfall-beta.json");} }
     string BackupPath { get {return SavePath+".last-good.bak";} }
 
@@ -51,6 +52,7 @@ public class AshfallBeta : MonoBehaviour
             art[i]=Sprite.Create(atlas,new Rect((i%4)*cw,(3-i/4)*ch,cw,ch),new Vector2(.5f,.12f),cw);
         }
         world=new WorldPresentation(this,d,art);
+        d.contracts=gameObject.AddComponent<ExpeditionContracts>();d.contracts.Initialize(d);
         d.objectives=gameObject.AddComponent<ExpeditionObjectives>();d.objectives.Initialize(d,art);
         d.blacksmith=gameObject.AddComponent<BlacksmithStation>();d.blacksmith.Initialize(d,art[10]);
         d.cam.orthographicSize=5.8f;
@@ -65,7 +67,7 @@ public class AshfallBeta : MonoBehaviour
         d.cam.transform.position=new Vector3(0,1,-10);
         Paused=true;Time.timeScale=0;
         if(CaptureTesting){title=false;Paused=false;Time.timeScale=1;StartCoroutine(Capture());}
-        if(DetailTesting)StartCoroutine(TestDetails());else if(WorldTesting)StartCoroutine(TestWorld());else if(WeaponTesting)StartCoroutine(TestWeapons());else if(ItemTesting)StartCoroutine(TestItems());else if(RigTesting)StartCoroutine(TestRig());else if(AdventureTesting)StartCoroutine(TestAdventure());else if(SprintTesting)StartCoroutine(TestSprint());else if(BetaTesting)StartCoroutine(TestBeta());
+        if(DetailTesting)StartCoroutine(TestDetails());else if(WorldTesting)StartCoroutine(TestWorld());else if(WeaponTesting)StartCoroutine(TestWeapons());else if(ItemTesting)StartCoroutine(TestItems());else if(RigTesting)StartCoroutine(TestRig());else if(ContractTesting)StartCoroutine(TestContracts());else if(AdventureTesting)StartCoroutine(TestAdventure());else if(SprintTesting)StartCoroutine(TestSprint());else if(BetaTesting)StartCoroutine(TestBeta());
     }
     IEnumerator TestDetails(){
         yield return new WaitForSecondsRealtime(1);title=false;pause=true;d.player.enabled=false;NavigationQA.Run();
@@ -175,6 +177,19 @@ public class AshfallBeta : MonoBehaviour
         d.bag[ItemId.IronSword]=1;d.bag[ItemId.Gold]=1000;d.bag[ItemId.IronOre]=100;d.blacksmith.selected=ItemId.IronSword;d.blacksmith.open=true;pause=false;yield return null;yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../sprint-blacksmith.png"));
         Debug.Log("OBJECTIVE / ELITE / FORGE QA: ALL CHECKS PASSED");yield return new WaitForSecondsRealtime(.5f);Application.Quit();
     }
+    IEnumerator TestContracts(){
+        yield return new WaitForSecondsRealtime(1);title=false;pause=true;d.player.enabled=false;d.kills=60;d.bossState=2;foreach(ItemId item in Enum.GetValues(typeof(ItemId)))d.bag[item]=1000;d.contracts.Load(null);
+        Check(d.contracts.NeedsSelection(1)&&d.contracts.Select(1,ExpeditionContract.HuntersMark)&&!d.contracts.Select(1,ExpeditionContract.IronTrial),"Area contract is required once and then locked");
+        TravelForTest(1);Check(d.enemies.Exists(e=>e&&e.gameObject.name.Contains("Contract elite")),"Hunter's Mark deploys an additional readable elite");
+        Check(d.contracts.Select(2,ExpeditionContract.IronTrial)&&Mathf.Approximately(d.contracts.EnemyHealthMultiplier(2),1.2f)&&Mathf.Approximately(d.contracts.EnemyDamageMultiplier(2),1.15f),"Iron Trial exposes bounded enemy scaling");TravelForTest(2);var trialEnemy=d.enemies.Find(e=>e&&e.modifier==EliteModifier.None);Check(trialEnemy&&trialEnemy.hp==trialEnemy.maxHp&&trialEnemy.maxHp>50,"Iron Trial scales fresh enemies at full health");
+        Check(d.contracts.Select(3,ExpeditionContract.GlassOath)&&Mathf.Approximately(d.contracts.PlayerDamageMultiplier(3),1.25f)&&Mathf.Approximately(d.contracts.EnemyDamageMultiplier(3),1.25f),"Glass Oath raises both sides' damage");TravelForTest(3);Check(d.player.Damage>ItemCatalog.BaseDamage(ItemCatalog.Equipped(d.player),d.player.weapon),"Glass Oath applies its player damage reward in the selected area");
+        int iron=d.bag[ItemId.IronOre];d.contracts.GrantReward(2);Check(d.bag[ItemId.IronOre]==iron+2,"Iron Trial grants its advertised biome material reward");int gold=d.bag[ItemId.Gold],shards=d.bag[ItemId.AncientShard];d.contracts.GrantReward(3);Check(d.bag[ItemId.Gold]==gold+35&&d.bag[ItemId.AncientShard]==shards+1,"Glass Oath grants its advertised cache bonus");
+        TravelForTest(4);TravelForTest(0);Check(d.contracts.Select(4,ExpeditionContract.HuntersMark),"Previously visited areas can choose a migrated contract");TravelForTest(4);Check(d.enemies.Exists(e=>e&&e.gameObject.name.Contains("Contract elite"))&&d.contracts.applied[4],"Migrated contract applies once to a restored encounter");
+        Save();string modern=File.ReadAllText(SavePath);d.contracts.Load(null);Load();Check(d.contracts.Selected(1)==ExpeditionContract.HuntersMark&&d.contracts.Selected(2)==ExpeditionContract.IronTrial&&d.contracts.Selected(3)==ExpeditionContract.GlassOath,"Expedition choices persist through save/load");
+        var legacyItems=new int[Enum.GetValues(typeof(ItemId)).Length];legacyItems[(int)ItemId.Gold]=45;File.WriteAllText(SavePath,JsonUtility.ToJson(new SaveData{version=6,items=legacyItems}));Load();Check(d.contracts.NeedsSelection(1)&&d.contracts.Selected(1)==ExpeditionContract.None,"Version 6 saves migrate with unchosen contracts");File.WriteAllText(SavePath,modern);Load();
+        pendingTravel=4;contractOpen=true;pause=false;yield return null;yield return new WaitForEndOfFrame();ScreenCapture.CaptureScreenshot(Path.Combine(Application.dataPath,"../contract-choice.png"));
+        Debug.Log("EXPEDITION CONTRACT QA: ALL CHECKS PASSED");yield return new WaitForSecondsRealtime(.5f);Application.Quit();
+    }
     IEnumerator TestAdventure(){
         yield return new WaitForSecondsRealtime(1);title=false;pause=true;d.player.enabled=false;d.kills=60;d.zoneTier=10;d.bossState=2;foreach(ItemId item in Enum.GetValues(typeof(ItemId)))d.bag[item]=1000;
         var p=d.player;p.BufferAttack();p.BufferSpecial();Check(p.AttackBufferRemaining>0&&p.SpecialBufferRemaining>0,"Combat inputs buffer for 120ms");CombatHitStop.Trigger(.05f);Check(CombatHitStop.Active&&CombatHitStop.Remaining>0,"Heavy impacts use local hit-stop");CombatHitStop.Reset();
@@ -228,11 +243,12 @@ public class AshfallBeta : MonoBehaviour
     {
         if(!title&&!pause){if(Input.GetKeyDown(KeyCode.C))d.craftOpen=!d.craftOpen;if(Input.GetKeyDown(KeyCode.I))d.inventoryOpen=!d.inventoryOpen;if(Input.GetKeyDown(KeyCode.H))d.helpOpen=!d.helpOpen;if(Input.GetKeyDown(KeyCode.B))codex=!codex;}
         if(Input.GetKeyDown(KeyCode.Escape)){
-            if(d.craftOpen||d.inventoryOpen||d.helpOpen||map||codex||settings||(d.blacksmith&&d.blacksmith.open)){d.craftOpen=d.inventoryOpen=d.helpOpen=map=codex=settings=false;if(d.blacksmith)d.blacksmith.open=false;}
+            if(contractOpen){contractOpen=false;if(contractReturnToMap)map=true;pendingTravel=-1;}
+            else if(d.craftOpen||d.inventoryOpen||d.helpOpen||map||codex||settings||(d.blacksmith&&d.blacksmith.open)){d.craftOpen=d.inventoryOpen=d.helpOpen=map=codex=settings=false;if(d.blacksmith)d.blacksmith.open=false;}
             else if(!title)pause=!pause;
         }
         if(!title&&!pause&&Input.GetKeyDown(KeyCode.M))map=!map;
-        Paused=title||pause||map||codex||settings||d.craftOpen||d.inventoryOpen||d.helpOpen||(d.blacksmith&&d.blacksmith.open);
+        Paused=title||pause||map||codex||settings||contractOpen||d.craftOpen||d.inventoryOpen||d.helpOpen||(d.blacksmith&&d.blacksmith.open);
         Time.timeScale=Paused?0:1;
         if(!Paused&&Time.time>saveAt){Save();saveAt=Time.time+30;}
         foreach(var e in d.enemies)if(e&&!e.GetComponent<BetaActor>()){
@@ -250,11 +266,19 @@ public class AshfallBeta : MonoBehaviour
     SpriteRenderer Prop(int index,Vector2 p,float size,bool flip=false){var g=new GameObject("Scenery "+index);g.transform.position=p;g.transform.localScale=Vector3.one*size;var r=g.AddComponent<SpriteRenderer>();r.sprite=art[index];r.flipX=flip;r.sortingOrder=100-(int)(p.y*10);return r;}
     public static void Slash(Vector3 p,bool magic){CombatFX.Slash(p,Vector2.right,1.7f,false,magic);}
     public static void DamageNumber(Vector3 p,int amount){CombatFX.Number(p,amount);}
-    [Serializable]class SaveData{public int[] items;public int kills,tier,boss;public bool armor;public int ringA,ringB;public int version,sword,bow,staff,armorItem,weaponMode;public ZoneRecord[] encounters;public int[] seals,objectiveProgress,objectiveAux,weaponUpgrades,bestiarySightings,bestiaryKills,bestiaryElites,worldEvents;public bool[] objectiveStarted,objectiveCompleted,claimed;public GameSettingsState settings;}
+    [Serializable]class SaveData{public int[] items;public int kills,tier,boss;public bool armor;public int ringA,ringB;public int version,sword,bow,staff,armorItem,weaponMode;public ZoneRecord[] encounters;public int[] seals,objectiveProgress,objectiveAux,weaponUpgrades,bestiarySightings,bestiaryKills,bestiaryElites,worldEvents,expeditionContracts;public bool[] objectiveStarted,objectiveCompleted,claimed,expeditionContractApplied;public GameSettingsState settings;}
     SaveData ReadSave(string path){var s=JsonUtility.FromJson<SaveData>(File.ReadAllText(path));if(s==null||s.items==null)throw new Exception("Invalid save data.");return s;}
     void WriteSave(string json){string temp=SavePath+".tmp";File.WriteAllText(temp,json);if(File.Exists(SavePath))File.Replace(temp,SavePath,BackupPath,true);else File.Move(temp,SavePath);}
-    void Save(){try{d.journal.Capture(d);var p=d.player;var bestiary=BestiaryJournal.Ensure(d);var s=new SaveData{version=6,items=new int[Enum.GetValues(typeof(ItemId)).Length],kills=d.kills,tier=d.zoneTier,boss=d.bossState==2?2:0,armor=p.leatherArmor,ringA=(int)p.ringA,ringB=(int)p.ringB,sword=(int)p.swordSlot,bow=(int)p.bowSlot,staff=(int)p.staffSlot,armorItem=(int)p.armorSlot,weaponMode=(int)p.weapon,encounters=d.journal.records,seals=d.objectives?d.objectives.seals:null,objectiveProgress=d.objectives?d.objectives.progress:null,objectiveAux=d.objectives?d.objectives.aux:null,objectiveStarted=d.objectives?d.objectives.started:null,objectiveCompleted=d.objectives?d.objectives.completed:null,claimed=d.objectives?d.objectives.claimed:null,weaponUpgrades=d.blacksmith?d.blacksmith.levels:null,bestiarySightings=bestiary.CaptureSightings(),bestiaryKills=bestiary.CaptureKills(),bestiaryElites=bestiary.CaptureEliteSightings(),worldEvents=WorldEvents.I?WorldEvents.I.Capture():null,settings=GameSettings.Capture()};foreach(var kv in d.bag)s.items[(int)kv.Key]=kv.Value;WriteSave(JsonUtility.ToJson(s));}catch(Exception e){Debug.LogWarning("Save unavailable: "+e.Message);}}
-    void Load(){try{SaveData s;bool recovered=false;try{s=ReadSave(SavePath);}catch(Exception primary){if(!File.Exists(BackupPath))throw new Exception("Invalid save and no recovery backup.",primary);s=ReadSave(BackupPath);recovered=true;}if(recovered){if(File.Exists(SavePath)&&!File.Exists(SavePath+".corrupt.bak"))File.Copy(SavePath,SavePath+".corrupt.bak");File.Copy(BackupPath,SavePath,true);}if(s.version<2&&!File.Exists(SavePath+".pre-expansion.bak"))File.Copy(SavePath,SavePath+".pre-expansion.bak");if(s.version<3&&!File.Exists(SavePath+".pre-expedition.bak"))File.Copy(SavePath,SavePath+".pre-expedition.bak");if(s.version<5&&!File.Exists(SavePath+".pre-objectives-forge.bak"))File.Copy(SavePath,SavePath+".pre-objectives-forge.bak");if(s.version<6&&!File.Exists(SavePath+".pre-adventure-polish.bak"))File.Copy(SavePath,SavePath+".pre-adventure-polish.bak");foreach(ItemId i in Enum.GetValues(typeof(ItemId)))d.bag[i]=(int)i<s.items.Length?Mathf.Max(0,s.items[(int)i]):0;d.kills=Mathf.Max(0,s.kills);d.zoneTier=Mathf.Max(0,s.tier);d.bossState=s.boss==2?2:0;var p=d.player;p.leatherArmor=s.armor;p.ringA=ValidRing(s.ringA);p.ringB=ValidRing(s.ringB);if(s.version<2)ItemCatalog.MigrateGear(p);else{p.swordSlot=ValidWeapon(s.sword,0);p.bowSlot=ValidWeapon(s.bow,1);p.staffSlot=ValidWeapon(s.staff,2);p.armorSlot=ItemCatalog.IsArmor((ItemId)s.armorItem)&&d.Has((ItemId)s.armorItem,1)?(ItemId)s.armorItem:ItemId.Gold;p.weapon=(WeaponKind)Mathf.Clamp(s.weaponMode,0,2);}d.journal.Load(s.encounters);if(d.objectives)d.objectives.Load(s.objectiveProgress,s.objectiveAux,s.objectiveStarted,s.objectiveCompleted,s.claimed,s.seals);if(d.blacksmith)d.blacksmith.Load(s.weaponUpgrades);BestiaryJournal.Ensure(d).Load(s.bestiarySightings,s.bestiaryKills,s.bestiaryElites);if(WorldEvents.I)WorldEvents.I.Load(s.worldEvents);if(s.version>=6)GameSettings.Apply(s.settings);else GameSettings.ResetDefaults();d.SpawnZone(zones[0]);p.transform.position=centers[0];d.cam.transform.position=new Vector3(centers[0].x,centers[0].y,-10);if(recovered)d.Tell("Recovered journey from the last good save.");}catch(Exception e){d.Tell("Could not load save: "+e.Message);}}
+    void Save(){try{d.journal.Capture(d);var p=d.player;var bestiary=BestiaryJournal.Ensure(d);var s=new SaveData{version=7,items=new int[Enum.GetValues(typeof(ItemId)).Length],kills=d.kills,tier=d.zoneTier,boss=d.bossState==2?2:0,armor=p.leatherArmor,ringA=(int)p.ringA,ringB=(int)p.ringB,sword=(int)p.swordSlot,bow=(int)p.bowSlot,staff=(int)p.staffSlot,armorItem=(int)p.armorSlot,weaponMode=(int)p.weapon,encounters=d.journal.records,seals=d.objectives?d.objectives.seals:null,objectiveProgress=d.objectives?d.objectives.progress:null,objectiveAux=d.objectives?d.objectives.aux:null,objectiveStarted=d.objectives?d.objectives.started:null,objectiveCompleted=d.objectives?d.objectives.completed:null,claimed=d.objectives?d.objectives.claimed:null,weaponUpgrades=d.blacksmith?d.blacksmith.levels:null,bestiarySightings=bestiary.CaptureSightings(),bestiaryKills=bestiary.CaptureKills(),bestiaryElites=bestiary.CaptureEliteSightings(),worldEvents=WorldEvents.I?WorldEvents.I.Capture():null,expeditionContracts=d.contracts?d.contracts.Capture():null,expeditionContractApplied=d.contracts?d.contracts.CaptureApplied():null,settings=GameSettings.Capture()};foreach(var kv in d.bag)s.items[(int)kv.Key]=kv.Value;WriteSave(JsonUtility.ToJson(s));}catch(Exception e){Debug.LogWarning("Save unavailable: "+e.Message);}}
+    void Load(){try{
+        SaveData s;bool recovered=false;try{s=ReadSave(SavePath);}catch(Exception primary){if(!File.Exists(BackupPath))throw new Exception("Invalid save and no recovery backup.",primary);s=ReadSave(BackupPath);recovered=true;}
+        if(recovered){if(File.Exists(SavePath)&&!File.Exists(SavePath+".corrupt.bak"))File.Copy(SavePath,SavePath+".corrupt.bak");File.Copy(BackupPath,SavePath,true);}
+        if(s.version<2&&!File.Exists(SavePath+".pre-expansion.bak"))File.Copy(SavePath,SavePath+".pre-expansion.bak");if(s.version<3&&!File.Exists(SavePath+".pre-expedition.bak"))File.Copy(SavePath,SavePath+".pre-expedition.bak");if(s.version<5&&!File.Exists(SavePath+".pre-objectives-forge.bak"))File.Copy(SavePath,SavePath+".pre-objectives-forge.bak");if(s.version<6&&!File.Exists(SavePath+".pre-adventure-polish.bak"))File.Copy(SavePath,SavePath+".pre-adventure-polish.bak");if(s.version<7&&!File.Exists(SavePath+".pre-contracts.bak"))File.Copy(SavePath,SavePath+".pre-contracts.bak");
+        foreach(ItemId i in Enum.GetValues(typeof(ItemId)))d.bag[i]=(int)i<s.items.Length?Mathf.Max(0,s.items[(int)i]):0;d.kills=Mathf.Max(0,s.kills);d.zoneTier=Mathf.Max(0,s.tier);d.bossState=s.boss==2?2:0;var p=d.player;p.leatherArmor=s.armor;p.ringA=ValidRing(s.ringA);p.ringB=ValidRing(s.ringB);
+        if(s.version<2)ItemCatalog.MigrateGear(p);else{p.swordSlot=ValidWeapon(s.sword,0);p.bowSlot=ValidWeapon(s.bow,1);p.staffSlot=ValidWeapon(s.staff,2);p.armorSlot=ItemCatalog.IsArmor((ItemId)s.armorItem)&&d.Has((ItemId)s.armorItem,1)?(ItemId)s.armorItem:ItemId.Gold;p.weapon=(WeaponKind)Mathf.Clamp(s.weaponMode,0,2);}
+        d.journal.Load(s.encounters);if(d.objectives)d.objectives.Load(s.objectiveProgress,s.objectiveAux,s.objectiveStarted,s.objectiveCompleted,s.claimed,s.seals);if(d.contracts)d.contracts.Load(s.expeditionContracts,s.expeditionContractApplied);if(d.blacksmith)d.blacksmith.Load(s.weaponUpgrades);BestiaryJournal.Ensure(d).Load(s.bestiarySightings,s.bestiaryKills,s.bestiaryElites);if(WorldEvents.I)WorldEvents.I.Load(s.worldEvents);if(s.version>=6)GameSettings.Apply(s.settings);else GameSettings.ResetDefaults();
+        d.SpawnZone(zones[0]);p.transform.position=centers[0];d.cam.transform.position=new Vector3(centers[0].x,centers[0].y,-10);if(recovered)d.Tell("Recovered journey from the last good save.");
+    }catch(Exception e){d.Tell("Could not load save: "+e.Message);}}
     public void SaveJourney(){Save();}
     ItemId ValidWeapon(int i,int kind){return ItemCatalog.WeaponType((ItemId)i)==kind&&d.Has((ItemId)i,1)?(ItemId)i:ItemId.Gold;}
     ItemId ValidRing(int i){return ItemCatalog.IsRing((ItemId)i)&&d.Has((ItemId)i,1)?(ItemId)i:ItemId.Gold;}
@@ -279,11 +303,11 @@ public class AshfallBeta : MonoBehaviour
         if(!atlas)return;Styles();GUI.depth=0;GUI.DrawTexture(new Rect(0,0,Screen.width,Screen.height),vignette);
         GUI.matrix=Matrix4x4.TRS(Vector3.zero,Quaternion.identity,new Vector3(Screen.width/1280f,Screen.height/720f,1));
         if(title){DrawTitle();GUI.matrix=Matrix4x4.identity;return;}
-        if(map){DrawMap();GUI.matrix=Matrix4x4.identity;return;}if(codex){DrawBestiary();GUI.matrix=Matrix4x4.identity;return;}if(settings){DrawSettings();GUI.matrix=Matrix4x4.identity;return;}if(d.blacksmith&&d.blacksmith.open){DrawForge();GUI.matrix=Matrix4x4.identity;return;}if(d.craftOpen){DrawCraft();GUI.matrix=Matrix4x4.identity;return;}if(d.inventoryOpen){DrawPack();GUI.matrix=Matrix4x4.identity;return;}if(d.helpOpen){DrawHelp();GUI.matrix=Matrix4x4.identity;return;}if(pause){DrawPause();GUI.matrix=Matrix4x4.identity;return;}
+        if(contractOpen){DrawContractChoice();GUI.matrix=Matrix4x4.identity;return;}if(map){DrawMap();GUI.matrix=Matrix4x4.identity;return;}if(codex){DrawBestiary();GUI.matrix=Matrix4x4.identity;return;}if(settings){DrawSettings();GUI.matrix=Matrix4x4.identity;return;}if(d.blacksmith&&d.blacksmith.open){DrawForge();GUI.matrix=Matrix4x4.identity;return;}if(d.craftOpen){DrawCraft();GUI.matrix=Matrix4x4.identity;return;}if(d.inventoryOpen){DrawPack();GUI.matrix=Matrix4x4.identity;return;}if(d.helpOpen){DrawHelp();GUI.matrix=Matrix4x4.identity;return;}if(pause){DrawPause();GUI.matrix=Matrix4x4.identity;return;}
         Panel(new Rect(20,20,252,90));Text(32,28,"ASHEN   Lv. "+(1+d.kills/6),small,150);Text(197,28,Mathf.CeilToInt(d.player.hp)+" / "+d.player.MaxHp,small,70);Bar(32,51,225,d.player.hp/d.player.MaxHp,new Color(.72f,.25f,.22f));Bar(32,68,225,d.player.stamina/100,new Color(.37f,.62f,.57f));Text(32,84,d.bag[ItemId.Gold]+" gold   R "+d.bag[ItemId.StaminaPotion]+"   F "+d.bag[ItemId.FuryPotion],small,225);
         Text(540,20,d.zone.ToUpper(),small,220);Text(450,626,d.player.SkillRemaining>0?"SKILL  "+d.player.SkillRemaining.ToString("0.0")+"s":"RMB  "+(d.player.weapon==WeaponKind.Sword?"WHIRLWIND":d.player.weapon==WeaponKind.Bow?"FAN SHOT":"EMBER NOVA")+"  /  35 stamina",small,380);
         if(d.player.furyUntil>Time.time)Text(32,119,"FURY +30%  /  "+Mathf.CeilToInt(d.player.furyUntil-Time.time)+"s",small);if(d.player.PoisonRemaining>0)Text(32,139,"POISONED  /  "+d.player.PoisonRemaining.ToString("0.0")+"s",small);
-        Panel(new Rect(986,20,271,84));Text(999,29,"EXPEDITION",small);Text(999,51,d.objectives?d.objectives.Status():"Explore the Hollow Road",small,246);Text(999,77,"M Map   "+d.kills+" defeated",small,246);
+        Panel(new Rect(986,20,271,105));Text(999,29,"EXPEDITION",small);Text(999,51,d.objectives?d.objectives.Status():"Explore the Hollow Road",small,246);int activeZone=WorldAtlas.Index(d.zone);Text(999,74,d.contracts?d.contracts.Summary(activeZone):"No expedition contract",small,246);Text(999,97,"M Map   "+d.kills+" defeated",small,246);
         DrawWeaponBar();world.Mini(small);
         Text(20,699,"WASD Move  •  SPACE Dash  •  E Interact",small,375);Text(850,699,"B Bestiary  •  C Craft  •  I Gear  •  ESC Pause",small,410);
         if(Time.time<d.toastUntil){Panel(new Rect(340,579,600,35));Text(355,587,d.toast,small,570);}
@@ -293,6 +317,13 @@ public class AshfallBeta : MonoBehaviour
     }
     void DrawTitle(){Fill(new Rect(0,0,1280,720),new Color(.015f,.025f,.026f,.48f));Panel(new Rect(72,90,442,540));Text(112,122,"A DARK FANTASY SURVIVAL RPG",small);var big=new GUIStyle(heading){fontSize=58};Text(108,167,"ASHFALL",big);Text(113,246,"FROM THE ASHES, YOU RISE.",small);Text(113,298,"A ruined village. A forest of hungry things.\nForge what you need to face the darkness.",label,365);if(Button(new Rect(113,397,355,48),"Begin journey")){title=false;d.Tell("Welcome to Ashfall. Hold left mouse to attack. Press M to travel.");}if((File.Exists(SavePath)||File.Exists(BackupPath))&&Button(new Rect(113,456,355,48),"Continue saved journey")){Load();title=false;}if(Button(new Rect(113,526,355,40),"Exit game"))Application.Quit();Text(112,590,"BETA 0.8  /  OBJECTIVES & FORGE",small);}
     void DrawPause(){Panel(new Rect(440,155,400,410));Text(471,180,"REST A MOMENT",heading);if(Button(new Rect(470,231,340,43),"Resume"))pause=false;if(Button(new Rect(470,284,340,43),"Bestiary [B]")){pause=false;codex=true;}if(Button(new Rect(470,337,340,43),"Accessibility settings")){pause=false;settings=true;}if(Button(new Rect(470,390,340,43),"Save journey")){Save();d.Tell("Journey saved.");}if(Button(new Rect(470,443,340,43),"Save and exit")){Save();Application.Quit();}}
+    void DrawContractChoice(){
+        int zone=Mathf.Clamp(pendingTravel,1,7);Panel(new Rect(115,92,1050,536));Text(148,117,"CHOOSE AN EXPEDITION CONTRACT",heading,800);Text(148,160,"Destination: "+WorldAtlas.Names[zone]+"  /  This choice is permanent for the area's guarded cache.",small,940);
+        ExpeditionContract[] offers={ExpeditionContract.HuntersMark,ExpeditionContract.IronTrial,ExpeditionContract.GlassOath};
+        for(int i=0;i<offers.Length;i++){var contract=offers[i];float x=148+i*332;Fill(new Rect(x,205,304,278),new Color(.10f,.11f,.19f,.98f));Text(x+18,224,ExpeditionContracts.Name(contract),heading,270);Text(x+18,280,"RISK",small,260);Text(x+18,306,ExpeditionContracts.Risk(contract),new GUIStyle(label){wordWrap=true},267);Text(x+18,374,"REWARD",small,260);Text(x+18,400,ExpeditionContracts.Reward(contract),new GUIStyle(label){wordWrap=true},267);if(Button(new Rect(x+18,498,267,52),"Accept "+ExpeditionContracts.Name(contract)))ChooseContract(contract);}
+        if(Button(new Rect(472,568,336,36),"Not yet  [ESC]")){contractOpen=false;if(contractReturnToMap)map=true;pendingTravel=-1;}
+    }
+    void ChooseContract(ExpeditionContract contract){int zone=pendingTravel;if(!d.contracts||!d.contracts.Select(zone,contract)){d.Tell("That expedition contract is already locked.");return;}contractOpen=false;contractReturnToMap=false;pendingTravel=-1;CompleteTravel(zone);d.Tell(ExpeditionContracts.Name(contract)+" accepted for "+WorldAtlas.Names[zone]+".");}
     void DrawCraft(){
         Panel(new Rect(230,145,820,435));Text(254,163,"FIELD CRAFTING  /  "+d.recipes.Count+" RECIPES",heading);
         Text(254,203,"Scroll to browse. Costs show owned / required. Equip crafted gear in I.",small);
@@ -336,7 +367,7 @@ public class AshfallBeta : MonoBehaviour
     public void OpenMap(){map=true;}public void CloseMap(){map=false;}
     void DrawMap(){world.Draw(heading,small);}
     public bool CanTravel(int i,out string reason){if(i<0||i>=zones.Length){reason="Unknown route.";return false;}int current=WorldAtlas.Index(d.zone);if(i==current){reason="You are already in "+zones[i]+".";return false;}if(!WorldAtlas.Unlocked(i,d)){reason="Sealed: requires "+WorldAtlas.Requirements[i]+" kills"+(i==7?" and the Hollow Knight defeated.":".");return false;}if(!WorldAtlas.Neighbors(current).Contains(i)){reason="Travel through a connected route first.";return false;}if(CombatRules.InCombat(d)){reason="Cannot travel while enemies are engaged.";return false;}Vector2 gate=WorldAtlas.Centers[current]+WorldAtlas.Gate(current,i);if(Vector2.Distance(d.player.transform.position,gate)>1.8f){reason="Reach the cyan route marker to travel.";return false;}reason="Route is clear.";return true;}
-    public bool TryTravel(int i){string reason;if(!CanTravel(i,out reason)){d.Tell(reason);return false;}CompleteTravel(i);return true;}
+    public bool TryTravel(int i){string reason;if(!CanTravel(i,out reason)){d.Tell(reason);return false;}if(d.contracts&&d.contracts.NeedsSelection(i)){pendingTravel=i;contractReturnToMap=map;map=false;contractOpen=true;return true;}CompleteTravel(i);return true;}
     void TravelForTest(int i){if(!Testing)throw new InvalidOperationException("Test travel is only available during QA runs.");CompleteTravel(i);}
     void CompleteTravel(int i){d.SpawnZone(zones[i]);d.player.transform.position=centers[i];if(i==0)d.player.hp=d.player.MaxHp;d.cam.transform.position=new Vector3(centers[i].x,centers[i].y,-10);Save();}
 

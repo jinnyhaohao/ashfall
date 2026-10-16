@@ -256,7 +256,7 @@ public class AshfallDirector : MonoBehaviour
     public string toast = "Wake, Ashen. The village is not safe.";
     public float toastUntil;
     public bool craftOpen, inventoryOpen, helpOpen;
-    public EncounterJournal journal=new EncounterJournal();public float combatUntil;public ExpeditionObjectives objectives;public BlacksmithStation blacksmith;
+    public EncounterJournal journal=new EncounterJournal();public float combatUntil;public ExpeditionObjectives objectives;public ExpeditionContracts contracts;public BlacksmithStation blacksmith;
     public int kills, zoneTier, bossState; // bossState: 0 not spawned, 1 alive, 2 defeated
     void Awake()
     {
@@ -327,7 +327,7 @@ public class AshfallDirector : MonoBehaviour
         foreach(var warning in FindObjectsByType<EnemyVolleyWarningLife>(FindObjectsSortMode.None))Destroy(warning.gameObject);
         foreach(var shot in FindObjectsByType<HeroProjectile>(FindObjectsSortMode.None))Destroy(shot.gameObject);
         foreach(var pulse in FindObjectsByType<GroundPulse>(FindObjectsSortMode.None))Destroy(pulse.gameObject);
-        if(journal.Restore(this,area)){if(objectives&&area>0)objectives.Deploy(area,true);return;}
+        if(journal.Restore(this,area)){if(contracts&&area>0)contracts.ApplyRestored(area);if(objectives&&area>0)objectives.Deploy(area,true);return;}
         EnemyKind[][] roster={
             new[]{EnemyKind.Slime,EnemyKind.Goblin},
             new[]{EnemyKind.Wolf,EnemyKind.Slime,EnemyKind.Goblin,EnemyKind.MushroomShaman,EnemyKind.ForestBeast},
@@ -339,6 +339,7 @@ public class AshfallDirector : MonoBehaviour
             new[]{EnemyKind.DarkKnight,EnemyKind.IceWraith,EnemyKind.StoneGolem,EnemyKind.Scorpion}};
         if(area>0)foreach(var kind in roster[area])Spawn(kind,area==7?5:4);
         if(area>0)Spawn(roster[area][area%roster[area].Length],1,EliteRules.ForZone(area));
+        if(contracts&&area>0){contracts.DeployFresh(area);contracts.MarkApplied(area);}
         if(z=="Dungeon"&&bossState==0){Spawn(EnemyKind.HollowKnight,1,true);bossState=1;Tell("THE HOLLOW KNIGHT AWAKENS.");}
         if(objectives&&area>0)objectives.Deploy(area);
         foreach(var bolt in FindObjectsByType<EnemyBolt>(FindObjectsSortMode.None))Destroy(bolt.gameObject);
@@ -346,11 +347,11 @@ public class AshfallDirector : MonoBehaviour
 
     public void Spawn(EnemyKind kind,int count,bool elite=false)
     {
-        int area=WorldAtlas.Index(zone);Vector2 home=WorldAtlas.Centers[area]; for(int i=0;i<count;i++){ Vector2 p=home+WorldAtlas.SpawnPoint(area,enemies.Count); var e=Make<EnemyActor>(kind.ToString(),p,EnemyColor(kind),kind==EnemyKind.ForestBeast?1.25f:kind==EnemyKind.HollowKnight?1.5f:.7f);e.director=this;e.kind=kind;e.Setup(elite);enemies.Add(e); }
+        int area=WorldAtlas.Index(zone);Vector2 home=WorldAtlas.Centers[area]; for(int i=0;i<count;i++){ Vector2 p=home+WorldAtlas.SpawnPoint(area,enemies.Count); var e=Make<EnemyActor>(kind.ToString(),p,EnemyColor(kind),kind==EnemyKind.ForestBeast?1.25f:kind==EnemyKind.HollowKnight?1.5f:.7f);e.director=this;e.kind=kind;e.Setup(elite);if(contracts)contracts.ApplyEnemy(e,area);enemies.Add(e); }
     }
     public void Spawn(EnemyKind kind,int count,EliteModifier modifier)
     {
-        int area=WorldAtlas.Index(zone);Vector2 home=WorldAtlas.Centers[area];for(int i=0;i<count;i++){Vector2 p=home+WorldAtlas.SpawnPoint(area,enemies.Count);var e=Make<EnemyActor>(kind.ToString(),p,EnemyColor(kind),kind==EnemyKind.ForestBeast?1.25f:kind==EnemyKind.HollowKnight?1.5f:.7f);e.director=this;e.kind=kind;e.Setup(modifier);enemies.Add(e);}
+        int area=WorldAtlas.Index(zone);Vector2 home=WorldAtlas.Centers[area];for(int i=0;i<count;i++){Vector2 p=home+WorldAtlas.SpawnPoint(area,enemies.Count);var e=Make<EnemyActor>(kind.ToString(),p,EnemyColor(kind),kind==EnemyKind.ForestBeast?1.25f:kind==EnemyKind.HollowKnight?1.5f:.7f);e.director=this;e.kind=kind;e.Setup(modifier);if(contracts)contracts.ApplyEnemy(e,area);enemies.Add(e);}
     }
     Color EnemyColor(EnemyKind e){ switch(e){case EnemyKind.Slime:return new Color(.3f,.9f,.5f);case EnemyKind.Wolf:return new Color(.55f,.45f,.35f);case EnemyKind.Skeleton:return new Color(.85f,.85f,.75f);case EnemyKind.Goblin:return new Color(.55f,.8f,.22f);case EnemyKind.ForestBeast:return new Color(.2f,.5f,.25f);default:return new Color(.72f,.35f,.9f);} }
     public void Add(ItemId item,int amount){ bag[item]+=amount; Tell("+"+amount+" "+ItemName(item)); }

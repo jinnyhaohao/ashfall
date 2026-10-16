@@ -98,7 +98,7 @@ public class ExpeditionObjectives : MonoBehaviour
     Color MarkerColor(int z,int slot){if(slot==3)return claimed[z]?new Color(.35f,.35f,.35f):completed[z]?Color.white:new Color(.55f,.55f,.6f);if(Type(z)==ObjectiveType.CorruptedAnchors)return (progress[z]&(1<<slot))!=0?new Color(.3f,.9f,1):new Color(.72f,.3f,.92f);return completed[z]?new Color(.3f,.9f,1):ObjectiveColor(Type(z));}
     static Color ObjectiveColor(ObjectiveType t){return t==ObjectiveType.SurvivalWaves?new Color(1,.5f,.18f):t==ObjectiveType.DefendRelic?new Color(.2f,.9f,1):t==ObjectiveType.EliteHunt?new Color(1,.25f,.45f):new Color(.7f,.3f,1);}
     void Complete(int z){started[z]=false;completed[z]=true;CombatFX.Burst(Position(z,0),Color.cyan,18);d.Tell("OBJECTIVE COMPLETE — the guarded cache is unlocked.");Save();}
-    void Claim(int z){claimed[z]=true;d.Add(ItemId.Gold,70+z*20);d.Add(ItemId.HealthPotion,2);d.Add(z==1?ItemId.WolfFang:z==2?ItemId.IronOre:z==3||z==5?ItemId.VenomSac:z==6?ItemId.StormCrystal:z==7?ItemId.Sunsteel:ItemId.AncientShard,4);CombatFX.Burst(Position(z,3),Color.yellow,15);d.Tell("Expedition cache claimed: gold, potions and materials.");Save();}
+    void Claim(int z){claimed[z]=true;d.Add(ItemId.Gold,70+z*20);d.Add(ItemId.HealthPotion,2);d.Add(z==1?ItemId.WolfFang:z==2?ItemId.IronOre:z==3||z==5?ItemId.VenomSac:z==6?ItemId.StormCrystal:z==7?ItemId.Sunsteel:ItemId.AncientShard,4);if(d.contracts)d.contracts.GrantReward(z);CombatFX.Burst(Position(z,3),Color.yellow,15);d.Tell("Expedition cache claimed with contract reward.");Save();}
     void Save(){if(AshfallBeta.Instance)AshfallBeta.Instance.SaveJourney();}
     public int AnchorCount(int z){int n=0;for(int i=0;i<3;i++)if((progress[z]&(1<<i))!=0)n++;return n;}
     public int Count(int z){return AnchorCount(z);}
