@@ -2,6 +2,12 @@
 
 This repository contains the complete Unity source for the Ashfall work-in-progress beta. Use Unity **6000.3.24f1** with Windows Build Support and open `Assets/Scenes/Ashfall.unity`. Unity regenerates its cache on first open.
 
+## Biome champions completed
+
+The 2026-10-16 biome-champion sprint adds six persistent named minibosses: Thornmaw in the Forest, Cragheart in the Mountain, Duneclaw in the Wasteland, the Mire Oracle in Sunken Marsh, the Prism Wraith in Crystal Caverns, and the Cinder Castellan in Ashen Citadel. Dungeon intentionally retains the Hollow Knight as its sole boss encounter. Champions use larger actors, a crown/nameplate, a dedicated HUD health bar, higher but bounded health/poise/damage, and slightly tighter reuse of their species' existing fully telegraphed attacks.
+
+Each champion drops a guaranteed gold and biome-material cache. Partial health, identity, and position persist between visits; defeated champions remain defeated. Saves now use schema version 9. Older visited areas receive their missing champion exactly once, and a one-time `.pre-minibosses.bak` is created before an older real save is migrated.
+
 ## Weapon identity paths completed
 
 The 2026-10-16 weapon-identity sprint turns forge rank three into a permanent two-path choice for every weapon. Force preserves the existing sword shockwave, bow pierce, and staff split-blast masterworks. Technique adds an 18% faster sword combo, a second angled bow shot at 55% damage, or a focused staff explosion with 55% more reach. Each individual weapon receives flavored path names while retaining its existing elemental or enemy-specific passive.
@@ -34,12 +40,13 @@ The Ruined Village is now a safe hub with an Ember & Iron blacksmith. Owned weap
 
 The 2026-09-28 playtest exposed an unfair relic-defense start: Wasteland scorpions were created inside the relic's damage radius, so integrity could drain before the player had a reasonable chance to intercept them. Fresh defense waves now enter from walkable outer approach chambers, show a cyan approach warning and `INCOMING` HUD state, and receive a two-second no-drain grace period. Restored in-progress defenses also relocate any legacy objective attackers found on top of the relic, so existing saves recover safely without resetting progress.
 
-The build entry **Ashfall > Build Windows** outputs `Builds/WeaponIdentityCandidate/Ashfall.exe`; **Ashfall > Build Manual Playtest** remains separate. The desktop `Play Ashfall Beta.cmd` launcher targets the fully tested WeaponIdentityCandidate build. The prior `Builds/ExpeditionChoiceCandidate`, `Builds/AdventurePolishCandidate`, `Builds/DefenseFixCandidate`, `Builds/ObjectiveForgeCandidate`, `Builds/ExpeditionIntegration`, and `Builds/DepthAndMotion` builds remain preserved as fallbacks.
+The build entry **Ashfall > Build Windows** outputs `Builds/BiomeChampionCandidate/Ashfall.exe`; **Ashfall > Build Manual Playtest** remains separate. The desktop `Play Ashfall Beta.cmd` launcher targets the fully tested BiomeChampionCandidate build. The prior `Builds/WeaponIdentityCandidate`, `Builds/ExpeditionChoiceCandidate`, `Builds/AdventurePolishCandidate`, `Builds/DefenseFixCandidate`, `Builds/ObjectiveForgeCandidate`, `Builds/ExpeditionIntegration`, and `Builds/DepthAndMotion` builds remain preserved as fallbacks.
 
 ## Verification
 
-The exact WeaponIdentityCandidate build passed all executable QA suites:
+The exact BiomeChampionCandidate build passed all executable QA suites:
 
+- `-minibossTest` (six zone identities, bounded scaling, nameplates, Dungeon exclusion, partial-health persistence, one-time rewards, no respawn, and version 8 migration)
 - `-masteryTest` (path gating and locking, three Technique behaviors, distinct weapon naming, persistence, and version 7 migration)
 - `-contractTest` (choice locking, additional elite deployment, bounded enemy/player modifiers, cache bonuses, persistence, and version 6 migration)
 - `-adventureTest` (combat buffering, hit-stop, poise, enemy abilities, three masterwork traits, bestiary, hidden shrines, death satchel, settings persistence, version 5 migration, objective cues, and elite symbols)
@@ -51,7 +58,7 @@ The exact WeaponIdentityCandidate build passed all executable QA suites:
 - `-weaponTest`
 - `-rigTest`
 
-Release captures were visually reviewed at 1280x720 for the two-path masterwork comparison, scrollable weapon list, three-card contract comparison, bestiary, accessibility settings, objective silhouettes/glyphs, HUD readability, five symbol-marked elite variants, and the fixed relic encounter. Both mastery descriptions and actions fit without clipping or overlap. Automated runs used the isolated `ashfall-qa.json`. The actively played real `ashfall-beta.json` was preserved and only read for verification; its SHA-256 after all QA remained `9FD99683504DEA534CC40226F29A0885FE162705B5384A30B7D4E4E3DBDB4E61` with its original 2026-09-28 modification time. The older `playtest-save-20260922.json` backup remains untouched.
+Release captures were visually reviewed at 1280x720 for the enlarged champion actor, crown/nameplate, champion HUD bar, two-path masterwork comparison, scrollable weapon list, three-card contract comparison, bestiary, accessibility settings, objective silhouettes/glyphs, HUD readability, five symbol-marked elite variants, and the fixed relic encounter. The champion presentation and existing attack warnings remain readable without clipping or overlap. Automated runs used the isolated `ashfall-qa.json`. The actively played real `ashfall-beta.json` was preserved and only read for verification; its SHA-256 after all QA remained `9FD99683504DEA534CC40226F29A0885FE162705B5384A30B7D4E4E3DBDB4E61` with its original 2026-09-28 modification time. The older `playtest-save-20260922.json` backup remains untouched.
 
 The spawn bug itself was found through the user's hands-on playtest. Post-fix mouse-and-keyboard combat feel remains outstanding: the Windows computer-control service returned no controllable apps, so native input could not be honestly exercised through automation.
 

@@ -159,13 +159,14 @@ public enum EnemyAttackStage { None, Windup, Strike, Recovery }
 public class EnemyActor : MonoBehaviour
 {
     public AshfallDirector director;public EnemyKind kind;public float hp,maxHp,speed,damage;
-    public EliteModifier modifier;public bool objectiveTarget;
+    public EliteModifier modifier;public bool objectiveTarget,isMiniboss;public int minibossZone;
     public float burnUntil,chillUntil,poisonUntil,shockUntil;float nextBurn,nextPoison,nextRanged,nextSlam;
     float nextAttack,nextDash,nextGround,nextEliteCue,stunUntil,windup,dashUntil,stageUntil,poiseRecoverAt;bool phaseTwo,preparing,dashHit,poiseBroken;Vector2 knock,dash;int attackToken;
-    public EnemyAttackStage AttackStage {get;private set;}public Vector2 AttackDirection {get;private set;}public bool PhaseTwo {get{return phaseTwo;}}
+    public EnemyAttackStage AttackStage {get;private set;}public Vector2 AttackDirection {get;private set;}public bool PhaseTwo {get{return phaseTwo;}}public bool IsMiniboss {get{return isMiniboss;}}public string MinibossName {get{return isMiniboss?BiomeMinibosses.Name(minibossZone):"";}}
     public float Poise {get;private set;}public float MaxPoise {get;private set;}public float PoiseFraction {get{return MaxPoise<=0?0:Mathf.Clamp01(Poise/MaxPoise);}}public bool PoiseBroken {get{return poiseBroken;}}
     public void Setup(bool elite){Setup(elite&&kind!=EnemyKind.HollowKnight?EliteRules.ForZone(WorldAtlas.Index(director.zone)):EliteModifier.None);}
     public void Setup(EliteModifier elite){switch(kind){case EnemyKind.Slime:maxHp=24;speed=1.5f;damage=6;break;case EnemyKind.Wolf:maxHp=38;speed=2.8f;damage=9;break;case EnemyKind.Skeleton:maxHp=48;speed=1.7f;damage=11;break;case EnemyKind.Goblin:maxHp=34;speed=2.2f;damage=8;break;case EnemyKind.ForestBeast:maxHp=110;speed=1.3f;damage=17;break;default:maxHp=300;speed=2.3f;damage=18;break;}ExpansionContent.Setup(this);modifier=kind==EnemyKind.HollowKnight?EliteModifier.None:elite;if(modifier==EliteModifier.Swift){maxHp*=1.15f;speed*=1.35f;}else if(modifier==EliteModifier.Armored)maxHp*=1.45f;else if(modifier==EliteModifier.Volatile){maxHp*=1.2f;damage*=1.1f;}else if(modifier==EliteModifier.Vampiric)maxHp*=1.25f;else if(modifier==EliteModifier.Warden){maxHp*=1.5f;damage*=1.1f;}MaxPoise=kind==EnemyKind.HollowKnight?150:kind==EnemyKind.ForestBeast||kind==EnemyKind.StoneGolem||kind==EnemyKind.DarkKnight?75:42;if(modifier==EliteModifier.Armored||modifier==EliteModifier.Warden)MaxPoise*=1.35f;if(modifier==EliteModifier.Swift)MaxPoise*=.85f;Poise=MaxPoise;hp=maxHp;nextDash=Time.time+2;nextRanged=Time.time+1.3f;nextEliteCue=Time.time+1;if(modifier!=EliteModifier.None)gameObject.AddComponent<EliteBadge>().Initialize(this);}
+    public void PromoteMiniboss(int zone){if(isMiniboss)return;isMiniboss=true;minibossZone=Mathf.Clamp(zone,1,7);maxHp*=1.7f+minibossZone*.04f;hp=maxHp;damage*=1.15f;speed*=1.04f;MaxPoise*=1.45f;Poise=MaxPoise;gameObject.name=BiomeMinibosses.Name(minibossZone)+" / "+BiomeMinibosses.Epithet(minibossZone);gameObject.AddComponent<MinibossBadge>().Initialize(this);}
     void Cue(EnemyAttackStage stage,float duration,Vector2 direction){AttackStage=stage;stageUntil=Time.time+duration;if(direction.sqrMagnitude>.01f)AttackDirection=direction.normalized;}
     public void RestorePhase(bool value){phaseTwo=value&&kind==EnemyKind.HollowKnight;if(phaseTwo){speed=Mathf.Max(speed,3.1f);damage=Mathf.Max(damage,24);nextGround=Time.time+1.2f;}}
     void Update(){
@@ -189,12 +190,12 @@ public class EnemyActor : MonoBehaviour
             foreach(var other in director.enemies)if(other&&other!=this){Vector2 delta=transform.position-other.transform.position;if(delta.sqrMagnitude<.65f&&delta.sqrMagnitude>.001f)separation+=delta.normalized*.8f;}
             transform.position+=(Vector3)(toward*speed*(Time.time<chillUntil?.55f:1)+separation)*Time.deltaTime;
         }
-        if((kind==EnemyKind.Wolf||kind==EnemyKind.HollowKnight||kind==EnemyKind.CaveBat||kind==EnemyKind.Scorpion||kind==EnemyKind.DarkKnight)&&Time.time>nextDash&&dist>2&&dist<7&&!preparing&&AttackStage==EnemyAttackStage.None){preparing=true;windup=Time.time+.45f;dash=toward;nextDash=Time.time+3.2f;Cue(EnemyAttackStage.Windup,.45f,dash);CombatFX.Telegraph(transform.position,(Vector2)transform.position+dash*3.8f,.45f);}
+        if((kind==EnemyKind.Wolf||kind==EnemyKind.HollowKnight||kind==EnemyKind.CaveBat||kind==EnemyKind.Scorpion||kind==EnemyKind.DarkKnight)&&Time.time>nextDash&&dist>2&&dist<7&&!preparing&&AttackStage==EnemyAttackStage.None){preparing=true;windup=Time.time+.45f;dash=toward;nextDash=Time.time+(isMiniboss?2.7f:3.2f);Cue(EnemyAttackStage.Windup,.45f,dash);CombatFX.Telegraph(transform.position,(Vector2)transform.position+dash*3.8f,.45f);}
         if(preparing&&Time.time>windup){preparing=false;dashHit=false;dashUntil=Time.time+.3f;Cue(EnemyAttackStage.Strike,.3f,dash);}
         if(kind==EnemyKind.HollowKnight&&phaseTwo&&Time.time>nextGround&&AttackStage==EnemyAttackStage.None){nextGround=Time.time+2.8f;StartCoroutine(Slam());}
-        if(kind==EnemyKind.Scorpion&&dist>3&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None&&!preparing){nextRanged=Time.time+3.6f;StartCoroutine(Volley(toward,true));}
-        if((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None){nextRanged=Time.time+(kind==EnemyKind.IceWraith?3.1f:2.2f);if(kind==EnemyKind.IceWraith)StartCoroutine(Volley(toward,false));else StartCoroutine(Cast(toward));}
-        if((kind==EnemyKind.StoneGolem||kind==EnemyKind.DarkKnight)&&dist<3.5f&&Time.time>nextSlam&&AttackStage==EnemyAttackStage.None){nextSlam=Time.time+4;StartCoroutine(Slam());}
+        if(kind==EnemyKind.Scorpion&&dist>3&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None&&!preparing){nextRanged=Time.time+(isMiniboss?3:3.6f);StartCoroutine(Volley(toward,true));}
+        if((kind==EnemyKind.MushroomShaman||kind==EnemyKind.IceWraith)&&dist<9&&Time.time>nextRanged&&AttackStage==EnemyAttackStage.None){nextRanged=Time.time+(kind==EnemyKind.IceWraith?(isMiniboss?2.65f:3.1f):(isMiniboss?1.85f:2.2f));if(kind==EnemyKind.IceWraith)StartCoroutine(Volley(toward,false));else StartCoroutine(Cast(toward));}
+        if((kind==EnemyKind.StoneGolem||kind==EnemyKind.DarkKnight)&&dist<3.5f&&Time.time>nextSlam&&AttackStage==EnemyAttackStage.None){nextSlam=Time.time+(isMiniboss?3.35f:4);StartCoroutine(Slam());}
         int area=WorldAtlas.Index(director.zone);Vector2 home=WorldAtlas.Centers[area];transform.position=WorldAtlas.Constrain(area,prior-home,(Vector2)transform.position-home)+home;
         if(dist<1&&Time.time>nextAttack&&AttackStage==EnemyAttackStage.None&&!preparing&&dashUntil<=0){nextAttack=Time.time+(kind==EnemyKind.Wolf?.9f:1.25f);StartCoroutine(MeleeStrike(toward));}
     }
@@ -256,7 +257,7 @@ public class AshfallDirector : MonoBehaviour
     public string toast = "Wake, Ashen. The village is not safe.";
     public float toastUntil;
     public bool craftOpen, inventoryOpen, helpOpen;
-    public EncounterJournal journal=new EncounterJournal();public float combatUntil;public ExpeditionObjectives objectives;public ExpeditionContracts contracts;public BlacksmithStation blacksmith;
+    public EncounterJournal journal=new EncounterJournal();public float combatUntil;public ExpeditionObjectives objectives;public ExpeditionContracts contracts;public BlacksmithStation blacksmith;public BiomeMinibosses minibosses;
     public int kills, zoneTier, bossState; // bossState: 0 not spawned, 1 alive, 2 defeated
     void Awake()
     {
@@ -327,7 +328,7 @@ public class AshfallDirector : MonoBehaviour
         foreach(var warning in FindObjectsByType<EnemyVolleyWarningLife>(FindObjectsSortMode.None))Destroy(warning.gameObject);
         foreach(var shot in FindObjectsByType<HeroProjectile>(FindObjectsSortMode.None))Destroy(shot.gameObject);
         foreach(var pulse in FindObjectsByType<GroundPulse>(FindObjectsSortMode.None))Destroy(pulse.gameObject);
-        if(journal.Restore(this,area)){if(contracts&&area>0)contracts.ApplyRestored(area);if(objectives&&area>0)objectives.Deploy(area,true);return;}
+        if(journal.Restore(this,area)){if(minibosses)minibosses.Deploy(area);if(contracts&&area>0)contracts.ApplyRestored(area);if(objectives&&area>0)objectives.Deploy(area,true);return;}
         EnemyKind[][] roster={
             new[]{EnemyKind.Slime,EnemyKind.Goblin},
             new[]{EnemyKind.Wolf,EnemyKind.Slime,EnemyKind.Goblin,EnemyKind.MushroomShaman,EnemyKind.ForestBeast},
@@ -339,6 +340,7 @@ public class AshfallDirector : MonoBehaviour
             new[]{EnemyKind.DarkKnight,EnemyKind.IceWraith,EnemyKind.StoneGolem,EnemyKind.Scorpion}};
         if(area>0)foreach(var kind in roster[area])Spawn(kind,area==7?5:4);
         if(area>0)Spawn(roster[area][area%roster[area].Length],1,EliteRules.ForZone(area));
+        if(minibosses)minibosses.Deploy(area);
         if(contracts&&area>0){contracts.DeployFresh(area);contracts.MarkApplied(area);}
         if(z=="Dungeon"&&bossState==0){Spawn(EnemyKind.HollowKnight,1,true);bossState=1;Tell("THE HOLLOW KNIGHT AWAKENS.");}
         if(objectives&&area>0)objectives.Deploy(area);
@@ -367,7 +369,7 @@ public class AshfallDirector : MonoBehaviour
     {
         enemies.Remove(e);kills++;BestiaryJournal.Ensure(this).RegisterKill(e.kind,e.modifier);if(kills>=6)zoneTier=Mathf.Max(zoneTier,1);if(kills>=12)zoneTier=Mathf.Max(zoneTier,2);if(kills>=18)zoneTier=Mathf.Max(zoneTier,3);if(objectives)objectives.NotifyEnemyDied(e);
         if(e.kind==EnemyKind.HollowKnight){bossState=2; Drop(e.transform.position,ItemId.HollowBlade,1);Drop(e.transform.position+Vector3.right,ItemId.RingVampire,1);Tell("VICTORY — Hollow Blade gained: +40% damage to undead.");}
-        else {DropTable(e);if(e.modifier!=EliteModifier.None){Drop(e.transform.position,ItemId.Gold,20+5*(int)e.modifier);Drop(e.transform.position+Vector3.right*.35f,(int)e.modifier%2==0?ItemId.AncientShard:ItemId.EmberShard,1);}if(UnityEngine.Random.value<.18f)Drop((Vector2)e.transform.position+UnityEngine.Random.insideUnitCircle,ItemId.RedHerb,1);}
+        else {DropTable(e);if(e.IsMiniboss&&minibosses)minibosses.Defeated(e);if(e.modifier!=EliteModifier.None){Drop(e.transform.position,ItemId.Gold,20+5*(int)e.modifier);Drop(e.transform.position+Vector3.right*.35f,(int)e.modifier%2==0?ItemId.AncientShard:ItemId.EmberShard,1);}if(UnityEngine.Random.value<.18f)Drop((Vector2)e.transform.position+UnityEngine.Random.insideUnitCircle,ItemId.RedHerb,1);}
         Destroy(e.gameObject);
     }
     void DropTable(EnemyActor e)
@@ -389,7 +391,7 @@ public class AshfallDirector : MonoBehaviour
         if(e.kind==EnemyKind.ForestBeast){Drop(e.transform.position+Vector3.right*.4f,ItemId.WolfHide,3);Drop(e.transform.position+Vector3.left*.4f,ItemId.RingHunter,1);}
     }
     public void RestoreLoot(Vector2 p,ItemId item,int amount){var l=Make<LootPickup>(ItemName(item),p,ItemColor(item),.35f);l.item=item;l.amount=amount;l.director=this;pickups.Add(l);}
-    void Drop(Vector2 p,ItemId item,int amount){var l=Make<LootPickup>(ItemName(item),p+UnityEngine.Random.insideUnitCircle*.35f,ItemColor(item),.35f);l.item=item;l.amount=amount;l.director=this;pickups.Add(l);}
+    public void Drop(Vector2 p,ItemId item,int amount){var l=Make<LootPickup>(ItemName(item),p+UnityEngine.Random.insideUnitCircle*.35f,ItemColor(item),.35f);l.item=item;l.amount=amount;l.director=this;pickups.Add(l);}
     Color ItemColor(ItemId i){if(i==ItemId.Gold)return new Color(1,.78f,.12f);if(i==ItemId.HealthPotion||i==ItemId.RedHerb)return new Color(.9f,.15f,.24f);if(i==ItemId.SlimeGel)return new Color(.25f,.9f,.45f);if(i==ItemId.HollowBlade)return new Color(.8f,.35f,1);return new Color(.78f,.78f,.85f);}
     void LegacyGUI()
     {
